@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""
+Enhanced CD Burner with Audio CD Support, CD-TEXT, Track Gaps, Fades, Verification, Help System, and Folder Support
+Place this file in: ~/cd_burner/audio_cd_burner.py
+"""
 
 import os
 import sys
@@ -1523,7 +1527,7 @@ class AudioCDWriter:
             if file_path.is_file() and file_path.suffix.lower() in self.AUDIO_EXTENSIONS:
                 audio_files.append(str(file_path))
         
-                # Sort files naturally (handles numbers in filenames correctly)
+       # Sort files naturally (handles numbers in filenames correctly)
         audio_files.sort(key=self._natural_sort_key)
         
         if audio_files:
@@ -1959,7 +1963,6 @@ class AudioCDWriter:
         
         print(f"CUE sheet created: {output_file}")
 
-
 class MusicCDOrganizer:
     """Helper class to organize music files with metadata."""
     
@@ -2005,10 +2008,9 @@ class MusicCDOrganizer:
         
         return [item['file'] for item in sorted_files]
 
-
 class HelpSystem:
     """Provides contextual help for various options."""
-    
+
     @staticmethod
     def verification_help():
         return """
@@ -2206,11 +2208,700 @@ WHAT ARE FADES?
 • Creates smooth, polished transitions
 • Professional audio production technique
 
-[Content continues from previous fade_effects_help section...]
+WHY USE FADES?
+✓ Smooth album flow between different songs
+✓ Remove abrupt starts or endings
+✓ Create radio-style presentations
+✓ DJ mix preparation (short fades for crossfading)
+✓ Hide recording artifacts at track beginnings/endings
+✓ Professional sound for home-produced tracks
+
+FADE TYPES:
+
+1. NO FADES (0 seconds)
+   • Audio plays exactly as-is
+   • Use for professionally mastered albums
+   • When tracks already have natural fades
+   • Classical music with precise timings
+
+2. STANDARD FADE OUT (3 seconds)
+   • Most common approach
+   • Radio-style presentation
+   • Good for ending tracks smoothly
+   • No fade in (preserves song intros)
+
+3. FADE IN/OUT (2s in, 3s out)
+   • Complete smooth transitions
+   • Good for compilation CDs
+   • Reduces jarring transitions
+   • Professional mixtape sound
+
+4. DJ MIX FADES (0.5 seconds)
+   • Short fades for beatmatching
+   • Designed to overlap with adjacent tracks
+   • Seamless mix capability
+   • EDM, dance music compilations
+
+5. GENTLE FADES (3-5 seconds)
+   • Longer, more gradual transitions
+   • Relaxation/meditation CDs
+   • Ambient music
+   • Audiobook chapters
+
+6. RADIO-STYLE (4s fade out only)
+   • Preserves intros, smooths endings
+   • Mimics commercial radio
+   • Good for talk/music mixes
+   • Professional broadcast sound
+
+TECHNICAL DETAILS:
+• Fades use linear volume curves (even, natural sound)
+• Applied during WAV conversion (before burning)
+• Permanent in the burned CD
+• Original files remain unchanged
+• Uses ffmpeg's afade filter
+
+FADE DURATION GUIDELINES:
+• 0.5s - Very short (DJ crossfade prep)
+• 1-2s - Quick, subtle fade
+• 3-4s - Standard professional fade
+• 5-7s - Long, gentle fade
+• 8-10s - Very long (special effects)
+
+WHEN TO USE FADE IN:
+✓ Track has abrupt/harsh beginning
+✓ Recording has noise at start
+✓ Creating smooth album flow
+✓ DJ mix preparation
+✗ Song has iconic intro (don't fade!)
+✗ Classical music (preserve conductor's timing)
+
+WHEN TO USE FADE OUT:
+✓ Track ends abruptly
+✓ Want smooth ending
+✓ Radio-style presentation
+✓ Hiding recording artifacts
+✗ Song has dramatic ending (preserve it!)
+✗ Live recordings (keep natural applause)
+
+COMMON PRESETS:
+
+Standard Fade Out (3s out, 0s in)
+├─ Best for: General purpose, most albums
+├─ Preserves: Song intros
+└─ Effect: Professional, smooth endings
+
+Full Fades (2s in, 3s out)
+├─ Best for: Mixtapes, compilations
+├─ Effect: Complete smooth flow
+└─ Use when: Mixing different sources
+
+DJ Mix (0.5s in/out)
+├─ Best for: Electronic music, dance
+├─ Effect: Beatmatch-ready
+└─ Purpose: For manual mixing/crossfading
+
+Radio Style (4s out, 0s in)
+├─ Best for: Broadcast-style CDs
+├─ Effect: Like commercial radio
+└─ Good for: Talk/music combinations
+
+Gentle (3s in, 5s out)
+├─ Best for: Ambient, meditation
+├─ Effect: Very smooth, relaxing
+└─ Purpose: Calm, unobtrusive transitions
+
+INDIVIDUAL TRACK CONTROL:
+You can set different fades for each track:
+• Track 1: 0s in, 3s out (preserve intro, smooth ending)
+• Track 2-9: 0s in, 3s out (normal tracks)
+• Track 10: 0s in, 8s out (final track, long fade)
+
+COMBINING WITH OTHER FEATURES:
+• Works with CD-TEXT (metadata preserved)
+• Works with custom gaps (fades + pauses = pro sound)
+• Works with normalization (apply fades first, then normalize)
+• Compatible with all audio formats
+
+IMPORTANT NOTES:
+• Fades are PERMANENT in the burned CD
+• Cannot be removed after burning
+• Original source files remain unchanged
+• Preview tracks before burning to test fade durations
+• Fades reduce effective track length slightly
+
+AUDIO QUALITY:
+• No quality loss (uses high-quality algorithms)
+• Linear fades sound natural
+• No digital artifacts
+• Professional broadcast-quality
+
+TROUBLESHOOTING:
+• If fade is too short: Song still ends abruptly
+  → Increase fade duration to 4-5 seconds
+  
+• If fade is too long: Noticeable volume drop
+  → Reduce fade duration to 2-3 seconds
+  
+• If fade sounds unnatural: Wrong type of content
+  → Use no fade for classical/live recordings
+
+BEST PRACTICES:
+1. Listen to your tracks first
+2. Identify which need fades (abrupt starts/ends)
+3. Start with standard presets
+4. Customize individual tracks if needed
+5. Preview before burning (if possible)
+6. Remember: Less is often more!
+
+EXAMPLES:
+
+Album Mix CD:
+- Track 1 (upbeat): 0s in, 3s out
+- Track 2 (ballad): 2s in, 4s out
+- Track 3 (rock): 0s in, 3s out
+- Track 4 (acoustic): 2s in, 5s out
+
+DJ Mix Preparation:
+- All tracks: 0.5s in, 0.5s out
+- Allows beatmatching overlap
+- Seamless when mixed properly
+
+Meditation/Sleep CD:
+- All tracks: 3s in, 5s out
+- Very gentle transitions
+- Maintains relaxed atmosphere
+
+Radio Show:
+- Speech tracks: 0s in, 0s out
+- Music tracks: 0s in, 4s out
+- Preserves speech clarity
+
+TIP: When in doubt, use "Standard Fade Out" (3s out, 0s in).
+     It works for 90% of situations and sounds professional!
+
+NOTE: Fades are applied BEFORE normalization. This ensures the
+      fade curves remain smooth and natural-sounding.
 ═══════════════════════════════════════════════════════════════════════"""
     
-    # [Additional help methods continue as before - track_gaps_help, cdtext_help, etc.]
-    # I'll include the complete main() function below
+    @staticmethod
+    def track_gaps_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+TRACK GAPS (PAUSES) EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Track gaps are the silent pauses between songs on an audio CD. The
+standard is 2 seconds, but you can customize this for different effects.
+
+WHAT ARE TRACK GAPS?
+• Silent pauses inserted between tracks
+• Standard Red Book CD specification: 2 seconds
+• Gaps are separate from the audio tracks themselves
+• CD players handle gaps automatically during playback
+
+WHY CUSTOMIZE GAPS?
+Different music styles benefit from different gap lengths:
+
+STANDARD 2-SECOND GAPS:
+✓ Normal albums and compilations
+✓ Most commercial CDs use this
+✓ Safe default for general use
+
+NO GAPS (0 seconds) - GAPLESS PLAYBACK:
+✓ DJ mixes and continuous sets
+✓ Live concert recordings
+✓ Progressive rock/electronic albums designed to flow
+✓ Concept albums where tracks blend together
+⚠ NOTE: Some older CD players may add a tiny pause anyway
+
+SHORT GAPS (0.5-1 second):
+✓ Live albums (maintains concert atmosphere)
+✓ Fast-paced music (punk, metal)
+✓ Keeping energy high between tracks
+
+LONG GAPS (3-5 seconds):
+✓ Classical music (separation between movements)
+✓ Spoken word or podcasts
+✓ Meditation/relaxation CDs
+✓ When you want clear separation between tracks
+
+CUSTOM INDIVIDUAL GAPS:
+You can set different gap lengths for each track:
+• Track 1-3: 2 seconds (normal songs)
+• Track 4: 0 seconds (blends into track 5)
+• Track 5-10: 2 seconds
+• Track 11: 4 seconds (bonus track after pause)
+
+TECHNICAL DETAILS:
+• Gaps are implemented as "PREGAP" in the TOC file
+• Pregap appears BEFORE the track it's assigned to
+• Measured in CD frames (75 frames = 1 second)
+• Gaps don't use disc capacity (they're silence)
+• Actually, small gaps DO count toward capacity
+
+HOW GAPS AFFECT PLAYBACK:
+1. CD player reads track table at disc start
+2. When track ends, player enters pause/gap
+3. After gap time, next track begins
+4. Skip/seek buttons navigate to track start (after gap)
+
+COMPATIBILITY:
+✓ All CD players support standard gaps
+✓ Most players handle gapless correctly
+✓ Custom gaps work on all Red Book compliant players
+✓ Car stereos may add tiny pauses even with 0s gaps
+
+PRESETS AVAILABLE:
+1. Standard (2s all tracks) - Default, works everywhere
+2. Live Album (0.5s gaps) - Maintains concert flow
+3. DJ Mix (no gaps) - Seamless mixing
+4. Classical (3s gaps) - Separation between movements
+
+RECOMMENDATIONS:
+• For most users: Use standard 2-second gaps
+• For live recordings: Use 0.5s or gapless
+• For DJ mixes: Use gapless (0s)
+• For classical: Use 3-4 second gaps
+• For special effects: Customize individual gaps
+
+TIP: If unsure, stick with the 2-second default. It's the industry
+     standard for a reason!
+
+NOTE: Track gaps add to total disc time, so very long gaps on many
+      tracks could affect capacity (though this is rarely an issue).
+═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def cdtext_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+CD-TEXT SUPPORT EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+CD-TEXT is a metadata format that embeds track and album information
+directly into the audio CD. Compatible players can read and display
+this information without needing an internet connection or database.
+
+WHAT INFORMATION IS STORED:
+✓ Album title and artist
+✓ Individual track titles
+✓ Track artists/performers
+✓ Composer information (if available)
+✓ Genre and year
+
+WHERE CD-TEXT WORKS:
+✓ Modern car stereos (most 2005+)
+✓ Home CD players with LCD displays
+✓ Computer CD/DVD drives with supporting software
+✓ Portable CD players (newer models)
+
+METADATA SOURCES:
+The program automatically reads metadata from your audio files:
+• MP3 files → ID3 tags
+• FLAC files → Vorbis comments
+• M4A/AAC → iTunes-style tags
+• Others → file tags where available
+
+EDITING METADATA:
+You'll be given the option to:
+• Review extracted metadata before burning
+• Edit track titles, artists, and album info
+• Bulk edit (set same artist for all tracks)
+• Fix any incorrect or missing information
+
+CD-TEXT LIMITATIONS:
+• Maximum 80 characters per field
+• ASCII text recommended (international characters may not display)
+• Not all CD players support CD-TEXT (but won't cause problems)
+• Older CD players ignore CD-TEXT data
+
+COMPATIBILITY:
+• CD-TEXT discs play in ALL CD players (including old ones)
+• Players without CD-TEXT support simply ignore the extra data
+• No quality or compatibility issues
+• Standard Red Book audio CD format
+
+TECHNICAL REQUIREMENTS:
+• cdrdao with CD-TEXT support (most Linux distributions)
+• ffprobe for reading audio file metadata
+• The program handles all the technical details automatically
+
+WHEN TO USE CD-TEXT:
+✓ YES - For car audio (very useful!)
+✓ YES - For mixtapes/compilations you'll use frequently
+✓ YES - When you want professional-looking discs
+✗ NO  - If burning for very old players that have issues
+✗ NO  - When metadata extraction fails (program will warn you)
+
+TIP: CD-TEXT makes your burned discs feel like store-bought albums!
+     Your car stereo will show "Now Playing: Artist - Song Title"
+═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def preview_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+TRACK PREVIEW EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Preview lets you hear your tracks before burning to verify they're
+correct and in the right order.
+
+WHY PREVIEW?
+✓ Verify you selected the right files
+✓ Check track order is correct
+✓ Ensure audio quality is acceptable
+✓ Catch corrupted or wrong files before wasting a CD
+
+PREVIEW OPTIONS:
+1. Quick Preview (10 seconds each)
+   - Fast way to verify all tracks
+   - Good for checking order and file validity
+
+2. Extended Preview (30 seconds each)
+   - More time to judge audio quality
+   - Better for unfamiliar tracks
+
+3. Preview Specific Track
+   - Listen to one particular track
+   - Useful for double-checking problem files
+
+4. Preview Range
+   - Preview tracks 5-10, for example
+   - Useful for large collections
+
+CONTROLS DURING PREVIEW:
+• Press Ctrl+C to skip to the next track
+• You'll be asked if you want to continue after each skip
+• Audio plays through your system's default audio output
+
+REQUIREMENTS:
+• ffplay (part of ffmpeg package)
+• Working audio output on your system
+• Install with: sudo apt-get install ffmpeg
+
+TIPS:
+• Use headphones for better audio quality judgment
+• Preview at least a few seconds to catch encoding issues
+• If a track sounds wrong, cancel the burn and check the file
+• Preview is especially useful for compilation CDs from mixed sources
+
+NOTE: Preview plays the actual audio file, not the converted WAV.
+      The burned CD will sound identical.
+═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def capacity_calculator_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+DISC CAPACITY CALCULATOR EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+The capacity calculator analyzes your audio files to ensure they fit
+on a standard audio CD before burning.
+
+CD SIZES:
+• 74-minute CD = 4,440 seconds (older standard)
+• 80-minute CD = 4,800 seconds (modern standard)
+
+Most CDs sold today are 80-minute. Check your CD packaging to be sure.
+
+WHAT IT DOES:
+• Reads duration metadata from each audio file
+• Calculates total playing time
+• Shows remaining capacity
+• Warns if tracks exceed disc capacity
+• Displays visual progress bar
+• Includes track gap time in calculations
+
+AUDIO FILE METADATA:
+The calculator uses ffprobe to read embedded duration information from:
+✓ MP3 files (from frame headers)
+✓ FLAC files (from stream info)
+✓ M4A/AAC files (from container metadata)
+✓ WAV files (from RIFF header)
+✓ All other supported formats
+
+IMPORTANT NOTES:
+• Duration is based on PLAYBACK time, not file size
+• A 10MB MP3 and 50MB FLAC of the same song take the same CD space
+• Audio CDs use uncompressed PCM, so file size doesn't matter
+• Variable bitrate (VBR) files are handled correctly
+• Track gaps are included in the total time
+
+WHAT IF FILES DON'T FIT?
+1. Remove some tracks
+2. Split into multiple CDs
+3. Use CD-R 90 or 99-minute discs (rare, less compatible)
+4. Re-encode files to slightly lower quality (not recommended)
+
+OVERBURNING:
+Some burners support "overburning" beyond 80 minutes, but:
+✗ Not all CD players can read the overburned area
+✗ Higher risk of burning errors
+✗ May not work in car stereos or older players
+✗ Not recommended for important/archival burns
+
+TIP: Always leave a minute or two of buffer space for best
+     compatibility and to account for any encoding variations.
+═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def playlist_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+M3U/M3U8 PLAYLIST IMPORT EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+M3U playlists are simple text files that list audio files in a specific
+order. This feature preserves your carefully crafted playlist order when
+burning to CD.
+
+WHAT IS M3U?
+- M3U = MPEG Audio Layer 3 URL (simple text format)
+- M3U8 = UTF-8 encoded M3U (supports international characters)
+- Just a list of file paths, one per line
+
+EXAMPLE M3U FILE CONTENT:
+#EXTM3U
+#EXTINF:234,Artist - Song Title
+/path/to/song1.mp3
+#EXTINF:189,Another Artist - Another Song
+/path/to/song2.mp3
+./relative/path/song3.flac
+
+PATH HANDLING:
+• Absolute paths: /home/user/Music/song.mp3
+• Relative paths: ./songs/track.mp3 (relative to playlist location)
+• Windows paths: C:\Music\song.mp3 (converted automatically)
+
+CREATING M3U PLAYLISTS:
+Most music players can create playlists:
+• VLC: Media → Save Playlist to File
+• iTunes: File → Library → Export Playlist
+• Windows Media Player: Right-click playlist → Save As
+• Audacity: Can export track lists
+
+ADVANTAGES:
+✓ Preserves exact track order from your music player
+✓ Mix songs from different folders
+✓ Easy to edit in a text editor
+✓ Portable between different music applications
+
+PLAYLIST ORDER:
+- Files are burned in the EXACT order they appear in the playlist
+- No automatic reordering by track number or filename
+- Perfect for mixtapes, DJ sets, or custom compilations
+
+TIP: Create your perfect playlist in your favorite music player,
+     export as M3U, then burn it directly to CD!
+═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def folder_scanning_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+FOLDER SCANNING EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Instead of entering files one by one, you can point to a folder and
+the program will automatically find all audio files.
+
+RECURSIVE SCANNING:
+- Scans the folder AND all subdirectories
+- Useful for album folders with bonus tracks in subfolders
+- Example folder structure:
+  Album/
+  ├── 01_song.mp3
+  ├── 02_song.mp3
+  └── Bonus/
+      └── 03_bonus.mp3
+
+NON-RECURSIVE SCANNING:
+- Scans only the specified folder (no subdirectories)
+- Faster and simpler for flat folder structures
+- Use when all files are in one place
+
+SUPPORTED FORMATS:
+The scanner looks for these file types:
+• MP3, WAV, FLAC, M4A/AAC
+• OGG, WMA, OPUS
+
+FILE ORDERING:
+Files are sorted naturally by filename:
+• "01_track.mp3" comes before "10_track.mp3" ✓
+• Numbers in filenames are handled correctly
+• You can still reorder using metadata track numbers
+
+TIP: For best results, name your files with leading zeros:
+     01_track.mp3, 02_track.mp3, ... 10_track.mp3
+═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def normalize_audio_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+AUDIO NORMALIZATION EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Audio normalization adjusts the volume levels of your tracks to ensure
+consistent playback volume across the entire CD.
+
+WHY NORMALIZE?
+- Different songs often have different volume levels
+- Some tracks may be much quieter or louder than others
+- Normalization prevents you from adjusting volume between tracks
+
+WHAT IT DOES:
+- Analyzes each track to find its peak volume
+- Adjusts the gain so all tracks have similar perceived loudness
+- Prevents audio clipping (distortion from too-high volume)
+
+WHEN TO USE IT:
+✓ YES - When burning tracks from different sources/albums
+✓ YES - When some tracks sound noticeably quieter than others
+✓ YES - For mixtapes or compilation CDs
+
+WHEN NOT TO USE IT:
+✗ NO - When burning a complete album that's already mastered
+✗ NO - When preserving the original dynamic range is important
+✗ NO - For classical music where volume variation is intentional
+
+TECHNICAL NOTE:
+This uses 'peak normalization' which adjusts based on the loudest
+point in each track. Some audiophiles prefer 'loudness normalization'
+(ReplayGain) which considers perceived loudness instead.
+
+Normalization is NON-DESTRUCTIVE for this burn - your original files
+remain unchanged.
+
+ORDER OF OPERATIONS:
+1. Fades are applied first (if requested)
+2. Then normalization (if requested)
+This ensures fade curves remain smooth and natural.
+═══════════════════════════════════════════════════════════════════════"""
+
+    @staticmethod
+    def track_order_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+TRACK ORDERING EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+The program automatically determines track order using these methods:
+
+1. METADATA TAGS (Highest Priority)
+   • Reads embedded track numbers from MP3/FLAC/M4A files
+   • Uses the 'track' field (e.g., "3" or "3/12")
+   • Most reliable for albums ripped properly
+
+2. FILENAME PATTERNS (Fallback)
+   The program looks for these patterns:
+   • "01_songname.mp3" or "01 - songname.mp3"
+   • "Track 01.mp3" or "track_01.mp3"
+   • Any number at the start of the filename
+
+3. MANUAL OVERRIDE
+   To force a specific order, rename your files:
+   • 01_first_song.mp3
+   • 02_second_song.mp3
+   • 03_third_song.mp3
+
+FILES WITHOUT NUMBERS:
+- Placed at the end of the disc
+- Sorted alphabetically
+
+VERIFICATION:
+- The program ALWAYS shows the proposed order before burning
+- You can cancel and reorganize files if needed
+
+TIP: Use a tool like 'EasyTAG' or 'Kid3' to edit metadata tags
+     if your files don't have proper track numbers embedded.
+═══════════════════════════════════════════════════════════════════════"""
+
+    @staticmethod
+    def burn_speed_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+CD BURNING SPEED EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Burn speed affects both burn time and quality. Lower speeds generally
+produce more reliable burns.
+
+SPEED OPTIONS:
+- 1x  = 80 minutes for full CD (highest quality, very slow)
+- 2x  = 40 minutes for full CD (excellent quality, slow)
+- 4x  = 20 minutes for full CD (very good quality, moderate)
+- 8x  = 10 minutes for full CD (good quality, default)
+- 16x = 5 minutes for full CD  (acceptable quality, fast)
+- 24x+ = <5 minutes (lower quality, risk of errors)
+
+RECOMMENDATIONS:
+✓ Audio CDs: Use 4x-8x for best balance
+✓ Master copies: Use 1x-4x for maximum quality
+✓ Quick copies: 16x is usually fine
+✓ Older CD players: Burn at 4x or lower
+
+FACTORS TO CONSIDER:
+- Older/cheaper CD players read slow burns better
+- Car stereos often struggle with fast-burned discs
+- High speeds can cause 'jitter' (timing errors)
+- Your CD media has a maximum rated speed (check packaging)
+
+TROUBLESHOOTING:
+If CDs skip or won't play:
+1. Try burning at a slower speed (4x or 2x)
+2. Use better quality CD-R media
+3. Clean your CD burner's lens
+
+Current setting: 8x (recommended default)
+═══════════════════════════════════════════════════════════════════════"""
+
+    @staticmethod
+    def cd_media_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+CD MEDIA TYPES EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+CD-R (Compact Disc-Recordable)
+- Write once, permanent recording
+- Compatible with almost all CD players
+- Best for music CDs and final copies
+- Cannot be erased or rewritten
+- Capacity: 700MB / 80 minutes of audio
+
+CD-RW (Compact Disc-ReWritable)
+- Can be erased and rewritten (typically 1000+ times)
+- More expensive than CD-R
+- NOT compatible with some older CD players
+- Good for temporary backups or testing
+- Same capacity as CD-R
+
+AUDIO CD CONSIDERATIONS:
+- Use CD-R for maximum compatibility
+- "Audio CD-R" or "Music CD-R" are marketing terms (same as regular CD-R)
+- 74-minute vs 80-minute discs (80-min is standard now)
+
+QUALITY BRANDS (Recommended):
+- Verbatim (AZO dye)
+- Taiyo Yuden (if you can find them)
+- Sony
+- Maxell
+
+STORAGE TIPS:
+- Store burned CDs in cases, away from sunlight
+- Write on CDs with felt-tip markers only (not ballpoint)
+- CD-Rs can last 50-200 years if stored properly
+- Cheap media may degrade in 2-10 years
+
+SPEED RATINGS:
+Media is rated for maximum burn speed (e.g., 52x)
+- It's safe to burn slower than the rating
+- Never burn faster than the media rating
+═══════════════════════════════════════════════════════════════════════"""
 
 
 def main():
@@ -2236,7 +2927,7 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\nSinge 1.1.0")
+        print("\n=== Enhanced CD Burner with CD-TEXT, Gaps, Fades & Verification ===")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
@@ -2521,7 +3212,28 @@ def main():
             
             if help_choice == '1':
                 print(help_sys.verification_help())
-            # ... [other help topics]
+            if help_choice == '2':
+                print(help_sys.fade_effects_help())
+            if help_choice == '3':
+                print(help_sys.track_gaps_help())
+            if help_choice == '4':
+                print(help_sys.cdtext_help())
+            if help_choice == '5':
+                print(help_sys.folder_scanning_help())
+            if help_choice == '6':
+                print(help_sys.playlist_help())
+            if help_choice == '7':
+                print(help_sys.preview_help())
+            if help_choice == '8':  
+                print(help_sys.normalize_audio_help())
+            if help_choice == '9':
+                print(help_sys.track_order_help())
+            if help_choice == '10':
+                print(help_sys.burn_speed_help())
+            if help_choice == '11':
+                print(help_sys.cd_media_help())
+            if help_choice == '12':
+                continue
         
         elif choice == '8':
             print("\n" + "="*70)
@@ -2529,7 +3241,3 @@ def main():
             print("Goodbye!")
             print("="*70)
             break
-
-
-if __name__ == "__main__":
-    main()
