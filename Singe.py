@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Enhanced CD Burner with Audio CD Support, CD-TEXT, Track Gaps, Fades, Verification, Help System, and Folder Support
-Place this file in: ~/cd_burner/audio_cd_burner.py
-"""
 
 import os
 import sys
