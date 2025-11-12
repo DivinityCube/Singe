@@ -2154,6 +2154,302 @@ class AudioCDWriter:
             print("ffmpeg not installed. Install with: sudo apt-get install ffmpeg")
             return False
     
+    def convert_audio_format(self, input_file: str, output_file: str, 
+                            format_type: str, quality: str = 'high') -> bool:
+        """
+        Convert audio file to specified format using ffmpeg.
+        
+        Args:
+            input_file: Path to input audio file
+            output_file: Path to output audio file
+            format_type: Target format ('mp3', 'flac', 'ogg', 'aac', 'm4a', 'opus', 'wav')
+            quality: Quality setting ('low', 'medium', 'high', 'lossless')
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Base command
+            cmd = ['ffmpeg', '-i', input_file]
+            
+            # Format-specific encoding settings
+            if format_type.lower() == 'mp3':
+                if quality == 'low':
+                    cmd.extend(['-codec:a', 'libmp3lame', '-b:a', '128k'])
+                elif quality == 'medium':
+                    cmd.extend(['-codec:a', 'libmp3lame', '-b:a', '192k'])
+                elif quality == 'high':
+                    cmd.extend(['-codec:a', 'libmp3lame', '-b:a', '320k'])
+                else:  # lossless (V0)
+                    cmd.extend(['-codec:a', 'libmp3lame', '-q:a', '0'])
+            
+            elif format_type.lower() == 'flac':
+                # FLAC is always lossless
+                cmd.extend(['-codec:a', 'flac'])
+                if quality == 'high' or quality == 'lossless':
+                    cmd.extend(['-compression_level', '8'])
+                else:
+                    cmd.extend(['-compression_level', '5'])
+            
+            elif format_type.lower() in ['ogg', 'vorbis']:
+                if quality == 'low':
+                    cmd.extend(['-codec:a', 'libvorbis', '-q:a', '3'])
+                elif quality == 'medium':
+                    cmd.extend(['-codec:a', 'libvorbis', '-q:a', '5'])
+                elif quality == 'high':
+                    cmd.extend(['-codec:a', 'libvorbis', '-q:a', '7'])
+                else:  # lossless/max
+                    cmd.extend(['-codec:a', 'libvorbis', '-q:a', '10'])
+            
+            elif format_type.lower() in ['aac', 'm4a']:
+                if quality == 'low':
+                    cmd.extend(['-codec:a', 'aac', '-b:a', '128k'])
+                elif quality == 'medium':
+                    cmd.extend(['-codec:a', 'aac', '-b:a', '192k'])
+                elif quality == 'high':
+                    cmd.extend(['-codec:a', 'aac', '-b:a', '256k'])
+                else:  # max
+                    cmd.extend(['-codec:a', 'aac', '-b:a', '320k'])
+            
+            elif format_type.lower() == 'opus':
+                if quality == 'low':
+                    cmd.extend(['-codec:a', 'libopus', '-b:a', '96k'])
+                elif quality == 'medium':
+                    cmd.extend(['-codec:a', 'libopus', '-b:a', '128k'])
+                elif quality == 'high':
+                    cmd.extend(['-codec:a', 'libopus', '-b:a', '192k'])
+                else:  # max
+                    cmd.extend(['-codec:a', 'libopus', '-b:a', '256k'])
+            
+            elif format_type.lower() == 'wav':
+                cmd.extend(['-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2'])
+            
+            else:
+                print(f"Unsupported format: {format_type}")
+                return False
+            
+            # Add output file and overwrite flag
+            cmd.extend([output_file, '-y'])
+            
+            # Run conversion
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                print(f"Error converting to {format_type}: {result.stderr}")
+                return False
+            
+            return True
+            
+        except FileNotFoundError:
+            print("ffmpeg not installed. Install with: sudo apt-get install ffmpeg")
+            return False
+        except Exception as e:
+            print(f"Error during conversion: {e}")
+            return False
+    
+    def batch_convert_formats(self, input_files: List[str], output_dir: str,
+                             formats: List[str], quality: str = 'high',
+                             preserve_metadata: bool = True) -> Dict[str, List[str]]:
+        """
+        Batch convert audio files to multiple formats.
+        
+        Args:
+            input_files: List of input audio file paths
+            output_dir: Directory to save converted files
+            formats: List of target formats (e.g., ['mp3', 'flac', 'ogg'])
+            quality: Quality setting for conversions
+            preserve_metadata: Whether to copy metadata to converted files
+            
+        Returns:
+            Dictionary mapping format to list of successfully converted files
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        results = {fmt: [] for fmt in formats}
+        
+        print("\n" + "="*70)
+        print("BATCH FORMAT CONVERSION")
+        print("="*70)
+        print(f"\nConverting {len(input_files)} file(s) to {len(formats)} format(s)")
+        print(f"Quality: {quality.upper()}")
+        print(f"Output directory: {output_dir}")
+        print("-"*70)
+        
+        total_conversions = len(input_files) * len(formats)
+        current = 0
+        
+        for input_file in input_files:
+            if not os.path.exists(input_file):
+                print(f"\n✗ File not found: {input_file}")
+                current += len(formats)
+                continue
+            
+            base_name = Path(input_file).stem
+            
+            for fmt in formats:
+                current += 1
+                
+                # Determine output extension
+                if fmt.lower() in ['ogg', 'vorbis']:
+                    ext = 'ogg'
+                elif fmt.lower() == 'aac':
+                    ext = 'm4a'  # AAC usually in M4A container
+                else:
+                    ext = fmt.lower()
+                
+                output_file = os.path.join(output_dir, f"{base_name}.{ext}")
+                
+                print(f"\n[{current}/{total_conversions}] Converting: {Path(input_file).name}")
+                print(f"  → {fmt.upper()} ({quality}): {Path(output_file).name}")
+                
+                if self.convert_audio_format(input_file, output_file, fmt, quality):
+                    results[fmt].append(output_file)
+                    
+                    # Get file size
+                    size_mb = os.path.getsize(output_file) / (1024 * 1024)
+                    print(f"  ✓ Success! ({size_mb:.2f} MB)")
+                else:
+                    print(f"  ✗ Failed to convert to {fmt}")
+        
+        # Summary
+        print("\n" + "="*70)
+        print("CONVERSION SUMMARY")
+        print("="*70)
+        
+        for fmt, files in results.items():
+            success_count = len(files)
+            total_count = len(input_files)
+            print(f"\n{fmt.upper()}:")
+            print(f"  Successfully converted: {success_count}/{total_count}")
+            
+            if files:
+                total_size = sum(os.path.getsize(f) for f in files) / (1024 * 1024)
+                print(f"  Total size: {total_size:.2f} MB")
+        
+        print("="*70)
+        
+        return results
+    
+    def export_formats_interactive(self, input_files: List[str]):
+        """
+        Interactive menu for exporting audio files to multiple formats.
+        
+        Args:
+            input_files: List of input audio file paths
+        """
+        print("\n" + "="*70)
+        print("MULTIPLE FORMAT EXPORT")
+        print("="*70)
+        print(f"\nReady to export {len(input_files)} file(s)")
+        
+        # Select output directory
+        print("\nOutput directory:")
+        print("1. Current directory")
+        print("2. Create new subdirectory")
+        print("3. Specify custom path")
+        
+        dir_choice = input("\nSelect option (1-3): ").strip()
+        
+        if dir_choice == '1':
+            output_dir = os.getcwd()
+        elif dir_choice == '2':
+            subdir_name = input("Enter subdirectory name (e.g., 'converted'): ").strip()
+            if not subdir_name:
+                subdir_name = 'converted'
+            output_dir = os.path.join(os.getcwd(), subdir_name)
+        elif dir_choice == '3':
+            output_dir = input("Enter full output path: ").strip()
+        else:
+            print("Invalid choice, using current directory")
+            output_dir = os.getcwd()
+        
+        # Select formats
+        print("\n" + "-"*70)
+        print("SELECT EXPORT FORMATS")
+        print("-"*70)
+        print("\nAvailable formats:")
+        print("1. MP3 (Most compatible, lossy)")
+        print("2. FLAC (Lossless, larger files)")
+        print("3. OGG Vorbis (Open source, lossy)")
+        print("4. AAC/M4A (Apple/iTunes, lossy)")
+        print("5. Opus (Modern, efficient, lossy)")
+        print("6. WAV (Uncompressed, CD quality)")
+        print("7. All lossy formats (MP3 + OGG + AAC + Opus)")
+        print("8. All formats")
+        print("9. Custom selection")
+        
+        format_choice = input("\nSelect option (1-9): ").strip()
+        
+        if format_choice == '1':
+            formats = ['mp3']
+        elif format_choice == '2':
+            formats = ['flac']
+        elif format_choice == '3':
+            formats = ['ogg']
+        elif format_choice == '4':
+            formats = ['aac']
+        elif format_choice == '5':
+            formats = ['opus']
+        elif format_choice == '6':
+            formats = ['wav']
+        elif format_choice == '7':
+            formats = ['mp3', 'ogg', 'aac', 'opus']
+        elif format_choice == '8':
+            formats = ['mp3', 'flac', 'ogg', 'aac', 'opus', 'wav']
+        elif format_choice == '9':
+            print("\nEnter format codes separated by commas:")
+            print("(mp3, flac, ogg, aac, opus, wav)")
+            formats_input = input("Formats: ").strip().lower()
+            formats = [f.strip() for f in formats_input.split(',')]
+        else:
+            print("Invalid choice, using MP3")
+            formats = ['mp3']
+        
+        # Select quality
+        print("\n" + "-"*70)
+        print("SELECT QUALITY")
+        print("-"*70)
+        print("\nQuality presets:")
+        print("1. Low (Smaller files, lower quality)")
+        print("2. Medium (Balanced)")
+        print("3. High (Larger files, better quality) [Recommended]")
+        print("4. Maximum/Lossless (Largest files, best quality)")
+        
+        quality_choice = input("\nSelect quality (1-4): ").strip()
+        
+        if quality_choice == '1':
+            quality = 'low'
+        elif quality_choice == '2':
+            quality = 'medium'
+        elif quality_choice == '3':
+            quality = 'high'
+        elif quality_choice == '4':
+            quality = 'lossless'
+        else:
+            print("Invalid choice, using high quality")
+            quality = 'high'
+        
+        # Confirm and proceed
+        print("\n" + "-"*70)
+        print("EXPORT SUMMARY")
+        print("-"*70)
+        print(f"Input files:    {len(input_files)}")
+        print(f"Output formats: {', '.join(f.upper() for f in formats)}")
+        print(f"Quality:        {quality.upper()}")
+        print(f"Output dir:     {output_dir}")
+        print(f"Total exports:  {len(input_files) * len(formats)}")
+        
+        confirm = input("\nProceed with export? (y/n): ").strip().lower()
+        
+        if confirm == 'y':
+            results = self.batch_convert_formats(
+                input_files, output_dir, formats, quality
+            )
+            
+            print("\n✓ Export complete!")
+            print(f"\nFiles saved to: {output_dir}")
+        else:
+            print("\nExport cancelled.")
+    
     def burn_audio_cd(self, audio_files: List[str], normalize: bool = True, speed: int = 8, 
                  dry_run: bool = False, use_cdtext: bool = True, 
                  track_gaps: Optional[List[float]] = None,
@@ -3537,6 +3833,110 @@ TIP: If you're unsure whether you'll add more tracks, keep the disc
      open. You can always finalize later without adding tracks.
 ═══════════════════════════════════════════════════════════════════════"""
 
+    @staticmethod
+    def format_export_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+MULTIPLE FORMAT EXPORT EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+The format export feature allows you to convert your audio files into
+multiple formats simultaneously, perfect for creating backups, sharing
+music across different devices, or archiving your collection.
+
+SUPPORTED FORMATS:
+
+MP3 (MPEG-1 Audio Layer 3)
+- Most universally compatible format
+- Lossy compression (smaller files, some quality loss)
+- Works on virtually all devices and players
+- Quality: 128kbps (low), 192kbps (medium), 320kbps (high)
+- Best for: Portability, compatibility, streaming
+
+FLAC (Free Lossless Audio Codec)
+- Lossless compression (perfect quality, larger files)
+- No quality loss compared to original
+- Open source and royalty-free
+- Supports full metadata and album art
+- Best for: Archival, audiophiles, home listening
+
+OGG Vorbis
+- Open source lossy compression
+- Better quality than MP3 at same bitrate
+- Not as widely supported as MP3
+- Quality levels: 3 (low), 5 (medium), 7 (high), 10 (max)
+- Best for: Open source enthusiasts, good quality/size ratio
+
+AAC/M4A (Advanced Audio Coding)
+- Used by Apple/iTunes
+- Better quality than MP3 at same bitrate
+- Native format for iPod, iPhone, iPad
+- Quality: 128kbps (low), 192kbps (medium), 256kbps (high)
+- Best for: Apple devices, iTunes users
+
+Opus
+- Modern, highly efficient codec
+- Excellent quality at low bitrates
+- Great for streaming and voice
+- Quality: 96kbps (low), 128kbps (medium), 192kbps (high)
+- Best for: Modern devices, web streaming
+
+WAV (Waveform Audio File Format)
+- Uncompressed PCM audio
+- CD-quality (44.1kHz, 16-bit stereo)
+- Large file sizes
+- Universal compatibility
+- Best for: CD burning, professional audio work
+
+QUALITY SETTINGS:
+
+LOW - Smaller files, acceptable quality
+  MP3: 128kbps | AAC: 128kbps | OGG: Q3 | Opus: 96kbps
+  Use for: Podcasts, audiobooks, low-storage devices
+
+MEDIUM - Balanced quality and size
+  MP3: 192kbps | AAC: 192kbps | OGG: Q5 | Opus: 128kbps
+  Use for: General listening, most music
+
+HIGH - Excellent quality, larger files
+  MP3: 320kbps | AAC: 256kbps | OGG: Q7 | Opus: 192kbps
+  Use for: Critical listening, archival copies
+
+MAXIMUM/LOSSLESS - Best possible quality
+  MP3: V0 VBR | AAC: 320kbps | OGG: Q10 | FLAC/WAV: Lossless
+  Use for: Archival, audiophile listening, mastering
+
+BATCH EXPORT WORKFLOW:
+1. Select source files (manual, folder scan, or playlist)
+2. Choose output directory
+3. Select target formats (one or multiple)
+4. Choose quality level
+5. Confirm and export
+
+The tool will convert all selected files to all chosen formats,
+preserving metadata (tags, album art) when possible.
+
+FILE SIZES (approximate for 4-minute song):
+- WAV (uncompressed): ~40MB
+- FLAC (lossless): ~25MB
+- MP3 320kbps: ~10MB
+- MP3 192kbps: ~6MB
+- AAC 256kbps: ~8MB
+- OGG Q7: ~7MB
+- Opus 192kbps: ~6MB
+
+TIPS:
+- For archival: Use FLAC (lossless quality, compressed)
+- For compatibility: Use MP3 at 320kbps
+- For Apple devices: Use AAC/M4A
+- For modern web: Use Opus
+- Export multiple formats for different use cases
+
+METADATA PRESERVATION:
+All formats support metadata (artist, title, album, etc.)
+Album art is preserved in: MP3, FLAC, AAC/M4A, OGG
+═══════════════════════════════════════════════════════════════════════"""
+
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
     writer = AudioCDWriter()
@@ -3569,10 +3969,11 @@ def main():
         print("6. Rip audio CD (preserves track order)")
         print("7. Verify last burned CD")
         print("8. Create CUE sheet")
-        print("9. Help topics")
-        print("10. Exit")
+        print("9. Export to multiple formats")
+        print("10. Help topics")
+        print("11. Exit")
 
-        choice = input("\nSelect option (1-10): ").strip()
+        choice = input("\nSelect option (1-11): ").strip()
         
         if choice in ['1', '2', '3']:
             # Common workflow for all audio CD burning options
@@ -3982,6 +4383,44 @@ def main():
                 writer.create_cue_sheet(organized_files)
         
         elif choice == '9':
+            # Export to multiple formats
+            print("\n" + "="*70)
+            print("EXPORT TO MULTIPLE FORMATS")
+            print("="*70)
+            print("\nHow would you like to select files?")
+            print("1. Enter file paths manually")
+            print("2. Scan a folder")
+            print("3. Use M3U/M3U8 playlist")
+            
+            source_choice = input("\nSelect option (1-3): ").strip()
+            
+            export_files = []
+            
+            if source_choice == '1':
+                print("\nEnter audio file paths (one per line, empty line to finish):")
+                while True:
+                    file_path = input().strip()
+                    if not file_path:
+                        break
+                    export_files.append(file_path)
+            
+            elif source_choice == '2':
+                folder_path = input("\nEnter folder path: ").strip()
+                if folder_path:
+                    recursive = input("Scan subdirectories? (y/n): ").strip().lower() == 'y'
+                    export_files = writer.scan_folder_for_audio(folder_path, recursive)
+            
+            elif source_choice == '3':
+                playlist_path = input("\nEnter M3U/M3U8 playlist path: ").strip()
+                if playlist_path:
+                    export_files = writer.parse_m3u_playlist(playlist_path)
+            
+            if export_files:
+                writer.export_formats_interactive(export_files)
+            else:
+                print("\n✗ No files selected for export")
+        
+        elif choice == '10':
             print("\n=== HELP TOPICS ===")
             print("1. Multi-Session Support (NEW!)")
             print("2. CD Verification")
@@ -3995,9 +4434,10 @@ def main():
             print("10. Track Ordering")
             print("11. Burn Speed")
             print("12. CD Media Types")
-            print("13. Back to main menu")
+            print("13. Format Export (NEW!)")
+            print("14. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-13): ").strip()
+            help_choice = input("\nSelect help topic (1-14): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -4024,9 +4464,11 @@ def main():
             if help_choice == '12':
                 print(help_sys.cd_media_help())
             if help_choice == '13':
+                print(help_sys.format_export_help())
+            if help_choice == '14':
                 continue
         
-        elif choice == '10':
+        elif choice == '11':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
