@@ -11,10 +11,13 @@ import json
 from datetime import timedelta
 import hashlib
 import time
+import urllib.request
+import urllib.parse
+import urllib.error
 
 class AudioCDWriter:
     # Supported audio file extensions
-    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.wma', '.opus'}
+    AUDIO_EXTENSIONS = {'.mp3', '.wav', '.flac', '.m4a', '.aac', '.ogg', '.wma', '.opus', '.mp4', '.m4v'}
     
     # CD capacity constants
     CD_74_MIN_SECONDS = 74 * 60  # 4440 seconds
@@ -342,7 +345,6 @@ class AudioCDWriter:
                 result = subprocess.run(
                     ['cdparanoia', '-w', str(track_num), ripped_file],
                     capture_output=True,
-                    stderr=subprocess.PIPE,
                     text=True
                 )
                 
@@ -531,6 +533,416 @@ class AudioCDWriter:
             'performer': 'Unknown Artist',
             'duration': '0'
         }
+    
+    def calculate_disc_id(self, wav_files: List[str]) -> Optional[str]:
+        """
+        Calculate CDDB disc ID for a list of WAV files.
+        
+        Args:
+            wav_files: List of WAV file paths
+            
+        Returns:
+            CDDB disc ID string or None if calculation fails
+        """
+        try:
+            track_offsets = [150]  # First track starts at 150 frames (2 seconds)
+            total_frames = 150
+            
+            for wav_file in wav_files:
+                duration = self.get_audio_duration(wav_file)
+                if duration is None:
+                    return None
+                
+                frames = int(duration * 75)  # 75 frames per second
+                total_frames += frames
+                track_offsets.append(total_frames)
+            
+            # Calculate total disc length in seconds
+            disc_length = total_frames // 75
+            
+            # Calculate checksum
+            n = 0
+            for offset in track_offsets[:-1]:  # Exclude the lead-out offset
+                seconds = offset // 75
+                n += sum(int(d) for d in str(seconds))
+            
+            # CDDB disc ID formula
+            num_tracks = len(wav_files)
+            disc_id = ((n % 0xff) << 24 | disc_length << 8 | num_tracks)
+            
+            return f"{disc_id:08x}"
+            
+        except Exception as e:
+            print(f"Error calculating disc ID: {e}")
+            return None
+    
+    def query_musicbrainz(self, disc_id: str, num_tracks: int, track_durations: List[int]) -> Optional[Dict]:
+        """
+        Query MusicBrainz database for CD metadata.
+        
+        Args:
+            disc_id: CDDB disc ID
+            num_tracks: Number of tracks
+            track_durations: List of track durations in frames
+            
+        Returns:
+            Dictionary with album and track metadata or None if not found
+        """
+        try:
+            # build MusicBrainz discid calculation
+            # note: MusicBrainz uses a different algorithm than CDDB
+            # For now, i'll use the CDDB ID to search
+            
+            print(f"\nQuerying MusicBrainz database (Disc ID: {disc_id})...")
+            
+            # MusicBrainz API endpoint
+            base_url = "https://musicbrainz.org/ws/2/discid/"
+            
+            # construct the query URL
+            # note: this is a simplified approach. full implementation would need proper MusicBrainz disc ID calculation
+            url = f"{base_url}{disc_id}?fmt=json&inc=recordings+artist-credits"
+            
+            # set user agent (required by MusicBrainz API)
+            headers = {
+                'User-Agent': 'AudioCDWriter/1.0 (https://github.com/DivinityCube/Singe)'
+            }
+            
+            req = urllib.request.Request(url, headers=headers)
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode('utf-8'))
+                
+                if 'releases' in data and len(data['releases']) > 0:
+                    release = data['releases'][0]
+                    
+                    album_info = {
+                        'title': release.get('title', 'Unknown Album'),
+                        'artist': release.get('artist-credit-phrase', 'Unknown Artist'),
+                        'date': release.get('date', ''),
+                        'country': release.get('country', ''),
+                        'barcode': release.get('barcode', '')
+                    }
+                    
+                    tracks_info = []
+                    if 'media' in release and len(release['media']) > 0:
+                        media = release['media'][0]
+                        if 'tracks' in media:
+                            for track in media['tracks']:
+                                track_info = {
+                                    'title': track.get('title', 'Unknown'),
+                                    'artist': track.get('artist-credit-phrase', album_info['artist']),
+                                    'length': track.get('length', 0)
+                                }
+                                tracks_info.append(track_info)
+                    
+                    print("✓ Match found in MusicBrainz database!")
+                    return {
+                        'album': album_info,
+                        'tracks': tracks_info,
+                        'source': 'MusicBrainz'
+                    }
+                else:
+                    print("✗ No matches found in MusicBrainz database")
+                    return None
+                    
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                print("✗ Disc not found in MusicBrainz database")
+            else:
+                print(f"HTTP Error {e.code}: {e.reason}")
+            return None
+        except Exception as e:
+            print(f"Error querying MusicBrainz: {e}")
+            return None
+    
+    def query_cddb(self, disc_id: str, num_tracks: int, track_offsets: List[int], 
+                   disc_length: int) -> Optional[Dict]:
+        """
+        Query freedb/CDDB database for CD metadata.
+        
+        Args:
+            disc_id: CDDB disc ID
+            num_tracks: Number of tracks
+            track_offsets: List of track frame offsets
+            disc_length: Total disc length in seconds
+            
+        Returns:
+            Dictionary with album and track metadata or None if not found
+        """
+        try:
+            print(f"\nQuerying CDDB database (Disc ID: {disc_id})...")
+            
+            # use gnudb.org as a freedb mirror (freedb.org is discontinued)
+            server = "gnudb.gnudb.org"
+            
+            # Build query string
+            offsets_str = ' '.join(str(o) for o in track_offsets)
+            query_data = {
+                'cmd': f'cddb query {disc_id} {num_tracks} {offsets_str} {disc_length}',
+                'hello': 'user localhost AudioCDWriter 1.0',
+                'proto': '6'
+            }
+            
+            query_string = urllib.parse.urlencode(query_data)
+            url = f"http://{server}/~cddb/cddb.cgi?{query_string}"
+            
+            with urllib.request.urlopen(url, timeout=10) as response:
+                result = response.read().decode('utf-8')
+                lines = result.strip().split('\n')
+                
+                if not lines:
+                    print("✗ Empty response from CDDB")
+                    return None
+                
+                status_line = lines[0]
+                status_code = status_line.split()[0]
+                
+                if status_code == '200':
+                    # Exact match found
+                    parts = status_line.split(maxsplit=3)
+                    if len(parts) >= 4:
+                        category = parts[1]
+                        disc_id_response = parts[2]
+                        title = parts[3]
+                        
+                        # Read full entry
+                        return self._read_cddb_entry(server, category, disc_id_response)
+                        
+                elif status_code.startswith('21'):
+                    # Multiple matches - use first one
+                    if len(lines) > 1:
+                        match_line = lines[1]
+                        parts = match_line.split(maxsplit=2)
+                        if len(parts) >= 3:
+                            category = parts[0]
+                            disc_id_response = parts[1]
+                            
+                            print(f"Multiple matches found, using first match...")
+                            return self._read_cddb_entry(server, category, disc_id_response)
+                
+                elif status_code == '202':
+                    print("✗ No match found in CDDB database")
+                    return None
+                else:
+                    print(f"✗ CDDB query failed: {status_line}")
+                    return None
+                    
+        except Exception as e:
+            print(f"Error querying CDDB: {e}")
+            return None
+    
+    def _read_cddb_entry(self, server: str, category: str, disc_id: str) -> Optional[Dict]:
+        """
+        Read a full CDDB entry.
+        
+        Args:
+            server: CDDB server address
+            category: Music category
+            disc_id: Disc ID
+            
+        Returns:
+            Dictionary with parsed CDDB data
+        """
+        try:
+            query_data = {
+                'cmd': f'cddb read {category} {disc_id}',
+                'hello': 'user localhost AudioCDWriter 1.0',
+                'proto': '6'
+            }
+            
+            query_string = urllib.parse.urlencode(query_data)
+            url = f"http://{server}/~cddb/cddb.cgi?{query_string}"
+            
+            with urllib.request.urlopen(url, timeout=10) as response:
+                result = response.read().decode('utf-8', errors='ignore')
+                lines = result.strip().split('\n')
+                
+                album_data = {
+                    'title': 'Unknown Album',
+                    'artist': 'Unknown Artist',
+                    'genre': category,
+                    'date': ''
+                }
+                
+                tracks_data = []
+                
+                for line in lines:
+                    if line.startswith('DTITLE='):
+                        dtitle = line.split('=', 1)[1]
+                        if ' / ' in dtitle:
+                            artist, title = dtitle.split(' / ', 1)
+                            album_data['artist'] = artist.strip()
+                            album_data['title'] = title.strip()
+                        else:
+                            album_data['title'] = dtitle.strip()
+                    
+                    elif line.startswith('DYEAR='):
+                        album_data['date'] = line.split('=', 1)[1].strip()
+                    
+                    elif line.startswith('TTITLE'):
+                        match = re.match(r'TTITLE(\d+)=(.*)', line)
+                        if match:
+                            track_num = int(match.group(1))
+                            track_title = match.group(2).strip()
+                            
+                            # Ensure tracks list is large enough
+                            while len(tracks_data) <= track_num:
+                                tracks_data.append({
+                                    'title': f'Track {len(tracks_data) + 1}',
+                                    'artist': album_data['artist']
+                                })
+                            
+                            # Parse artist / title format
+                            if ' / ' in track_title:
+                                artist, title = track_title.split(' / ', 1)
+                                tracks_data[track_num]['artist'] = artist.strip()
+                                tracks_data[track_num]['title'] = title.strip()
+                            else:
+                                tracks_data[track_num]['title'] = track_title
+                
+                print("✓ Match found in CDDB database!")
+                return {
+                    'album': album_data,
+                    'tracks': tracks_data,
+                    'source': 'CDDB'
+                }
+                
+        except Exception as e:
+            print(f"Error reading CDDB entry: {e}")
+            return None
+    
+    def lookup_cd_metadata(self, wav_files: List[str]) -> Optional[Dict]:
+        """
+        Lookup CD metadata from online databases (CDDB/MusicBrainz).
+        
+        Args:
+            wav_files: List of WAV files that will be burned
+            
+        Returns:
+            Dictionary with album and track metadata or None if not found
+        """
+        print("\n" + "="*70)
+        print("CD METADATA LOOKUP")
+        print("="*70)
+        print("\nAttempting to identify CD from audio fingerprint...")
+        
+        # Calculate disc ID
+        disc_id = self.calculate_disc_id(wav_files)
+        if not disc_id:
+            print("✗ Could not calculate disc ID")
+            return None
+        
+        # Get track information for queries
+        track_offsets = [150]  # First track at 2 seconds
+        track_durations = []
+        total_frames = 150
+        
+        for wav_file in wav_files:
+            duration = self.get_audio_duration(wav_file)
+            if duration:
+                frames = int(duration * 75)
+                track_durations.append(frames)
+                total_frames += frames
+                track_offsets.append(total_frames)
+        
+        disc_length = total_frames // 75
+        num_tracks = len(wav_files)
+        
+        # we'll try MusicBrainz first (more modern and actively maintained)
+        metadata = self.query_musicbrainz(disc_id, num_tracks, track_durations)
+        
+        # then fall back to CDDB if MusicBrainz doesn't find anything
+        if not metadata:
+            print("\nFalling back to CDDB database...")
+            metadata = self.query_cddb(disc_id, num_tracks, track_offsets[:-1], disc_length)
+        
+        if metadata:
+            self._display_lookup_results(metadata)
+        
+        return metadata
+    
+    def _display_lookup_results(self, metadata: Dict):
+        """Display the results of a metadata lookup."""
+        print("\n" + "="*70)
+        print(f"METADATA FOUND ({metadata.get('source', 'Unknown')})")
+        print("="*70)
+        
+        album = metadata.get('album', {})
+        tracks = metadata.get('tracks', [])
+        
+        print(f"\nAlbum: {album.get('title', 'Unknown')}")
+        print(f"Artist: {album.get('artist', 'Unknown')}")
+        if album.get('date'):
+            print(f"Year: {album.get('date')}")
+        if album.get('genre'):
+            print(f"Genre: {album.get('genre')}")
+        
+        print(f"\nTracks ({len(tracks)}):")
+        print("-" * 70)
+        for i, track in enumerate(tracks, 1):
+            title = track.get('title', f'Track {i}')
+            artist = track.get('artist', album.get('artist', 'Unknown'))
+            
+            if artist != album.get('artist'):
+                print(f"  {i:2d}. {title} - {artist}")
+            else:
+                print(f"  {i:2d}. {title}")
+        
+        print("="*70)
+    
+    def apply_lookup_metadata(self, metadata: Dict, wav_files: List[str]) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+        """
+        Apply looked-up metadata to create track and album metadata structures.
+        
+        Args:
+            metadata: Metadata from CDDB/MusicBrainz lookup
+            wav_files: List of WAV files
+            
+        Returns:
+            Tuple of (tracks_metadata, album_info)
+        """
+        album = metadata.get('album', {})
+        tracks = metadata.get('tracks', [])
+        
+        album_info = {
+            'title': album.get('title', 'Audio CD'),
+            'artist': album.get('artist', 'Various Artists'),
+            'genre': album.get('genre', ''),
+            'date': album.get('date', '')
+        }
+        
+        tracks_metadata = []
+        for i, wav_file in enumerate(wav_files):
+            if i < len(tracks):
+                track = tracks[i]
+                track_metadata = {
+                    'title': track.get('title', f'Track {i+1}'),
+                    'artist': track.get('artist', album_info['artist']),
+                    'performer': track.get('artist', album_info['artist']),
+                    'album': album_info['title'],
+                    'track': str(i + 1),
+                    'genre': album_info['genre'],
+                    'date': album_info['date'],
+                    'composer': track.get('composer', ''),
+                    'duration': str(self.get_audio_duration(wav_file) or 0)
+                }
+            else:
+                # another fallback if not enough track info
+                track_metadata = {
+                    'title': f'Track {i+1}',
+                    'artist': album_info['artist'],
+                    'performer': album_info['artist'],
+                    'album': album_info['title'],
+                    'track': str(i + 1),
+                    'genre': album_info['genre'],
+                    'date': album_info['date'],
+                    'composer': '',
+                    'duration': str(self.get_audio_duration(wav_file) or 0)
+                }
+            
+            tracks_metadata.append(track_metadata)
+        
+        return tracks_metadata, album_info
     
     def configure_fades(self, num_tracks: int, track_names: List[str]) -> Tuple[List[float], List[float]]:
         """
@@ -1819,17 +2231,67 @@ class AudioCDWriter:
             print("EXTRACTING METADATA FOR CD-TEXT")
             print("="*70)
             
-            for i, audio_file in enumerate(audio_files_sorted, 1):
-                print(f"Reading metadata from track {i}...")
-                metadata = self.extract_metadata(audio_file)
-                tracks_metadata.append(metadata)
-                
-                # Try to determine album info from first track
-                if i == 1:
-                    album_info['title'] = metadata.get('album', 'Audio CD')
-                    album_info['artist'] = metadata.get('artist', 'Various Artists')
-                    album_info['genre'] = metadata.get('genre', '')
-                    album_info['date'] = metadata.get('date', '')
+            # ask if user wants to try online lookup first
+            lookup_response = input("\nTry online database lookup (CDDB/MusicBrainz)? (y/n): ").strip().lower()
+            
+            if lookup_response == 'y':
+                # we need to convert files to WAV first for disc ID calculation
+                print("\nPreparing files for disc identification...")
+                temp_wav_files = []
+                with tempfile.TemporaryDirectory() as lookup_temp_dir:
+                    for i, audio_file in enumerate(audio_files_sorted, 1):
+                        temp_wav = os.path.join(lookup_temp_dir, f"temp_{i:02d}.wav")
+                        if self.convert_to_wav(audio_file, temp_wav):
+                            temp_wav_files.append(temp_wav)
+                    
+                    if temp_wav_files:
+                        # attempt online lookup
+                        online_metadata = self.lookup_cd_metadata(temp_wav_files)
+                        
+                        if online_metadata:
+                            # apply the looked-up metadata
+                            tracks_metadata, album_info = self.apply_lookup_metadata(
+                                online_metadata, audio_files_sorted
+                            )
+                            print("\n✓ Using metadata from online database")
+                        else:
+                            print("\n✗ No matches found online, falling back to file metadata")
+                            # fall back to extracting from files
+                            for i, audio_file in enumerate(audio_files_sorted, 1):
+                                print(f"Reading metadata from track {i}...")
+                                metadata = self.extract_metadata(audio_file)
+                                tracks_metadata.append(metadata)
+                                
+                                if i == 1:
+                                    album_info['title'] = metadata.get('album', 'Audio CD')
+                                    album_info['artist'] = metadata.get('artist', 'Various Artists')
+                                    album_info['genre'] = metadata.get('genre', '')
+                                    album_info['date'] = metadata.get('date', '')
+                    else:
+                        print("✗ Could not prepare files for lookup, using file metadata")
+                        for i, audio_file in enumerate(audio_files_sorted, 1):
+                            print(f"Reading metadata from track {i}...")
+                            metadata = self.extract_metadata(audio_file)
+                            tracks_metadata.append(metadata)
+                            
+                            if i == 1:
+                                album_info['title'] = metadata.get('album', 'Audio CD')
+                                album_info['artist'] = metadata.get('artist', 'Various Artists')
+                                album_info['genre'] = metadata.get('genre', '')
+                                album_info['date'] = metadata.get('date', '')
+            else:
+                # extract metadata from files
+                for i, audio_file in enumerate(audio_files_sorted, 1):
+                    print(f"Reading metadata from track {i}...")
+                    metadata = self.extract_metadata(audio_file)
+                    tracks_metadata.append(metadata)
+                    
+                    # try to determine album info from first track
+                    if i == 1:
+                        album_info['title'] = metadata.get('album', 'Audio CD')
+                        album_info['artist'] = metadata.get('artist', 'Various Artists')
+                        album_info['genre'] = metadata.get('genre', '')
+                        album_info['date'] = metadata.get('date', '')
             
             # Display CD-TEXT preview
             self.display_cdtext_preview(tracks_metadata, album_info)
