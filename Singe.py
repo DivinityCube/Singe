@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Enhanced CD Burner with Audio CD Support, CD-TEXT, Track Gaps, Fades, Verification, Help System, and Folder Support
-Place this file in: ~/cd_burner/audio_cd_burner.py
-"""
 
 import os
 import sys
@@ -35,6 +31,111 @@ class AudioCDWriter:
         self.device = self._detect_cd_device()
         self.last_burn_wav_files = []  # Store WAV files for verification
         self.last_burn_checksums = {}  # Store checksums for verification
+    
+    def check_disc_status(self) -> Dict:
+        """
+        Check if a disc is inserted and its current status.
+        
+        Returns:
+            Dictionary with disc information
+        """
+        try:
+            # Use cdrdao to check disc status
+            result = subprocess.run(
+                ['cdrdao', 'disk-info', '--device', self.device],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            disc_info = {
+                'inserted': False,
+                'blank': False,
+                'appendable': False,
+                'finalized': False,
+                'sessions': 0,
+                'tracks': 0,
+                'used_capacity': 0,
+                'remaining_capacity': 0
+            }
+            
+            output = result.stderr + result.stdout
+            
+            # Parse output
+            if 'No disk' in output or 'Cannot' in output or 'not ready' in output.lower():
+                return disc_info
+            
+            disc_info['inserted'] = True
+            
+            # Check if blank
+            if 'blank' in output.lower():
+                disc_info['blank'] = True
+                disc_info['remaining_capacity'] = self.CD_80_MIN_SECONDS
+                return disc_info
+            
+            # Check if appendable (not finalized)
+            if 'appendable' in output.lower() or 'open' in output.lower():
+                disc_info['appendable'] = True
+            elif 'complete' in output.lower() or 'closed' in output.lower():
+                disc_info['finalized'] = True
+            
+            # Try to get track info
+            try:
+                para_result = subprocess.run(
+                    ['cdparanoia', '-Q'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                # Count tracks
+                track_count = 0
+                for line in para_result.stderr.split('\n'):
+                    if re.match(r'^\s*\d+\.', line):
+                        track_count += 1
+                
+                disc_info['tracks'] = track_count
+                
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            
+            return disc_info
+            
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            print(f"Error checking disc status: {e}")
+            return {'inserted': False}
+        except Exception as e:
+            print(f"Unexpected error checking disc status: {e}")
+            return {'inserted': False}
+
+    def display_disc_status(self, disc_info: Dict):
+        """Display formatted disc status information."""
+        print("\n" + "="*70)
+        print("DISC STATUS")
+        print("="*70)
+        
+        if not disc_info['inserted']:
+            print("✗ No disc inserted")
+            print("  Please insert a disc and try again.")
+        elif disc_info['blank']:
+            print("✓ Blank disc detected")
+            print(f"  Available capacity: {self._format_time(disc_info['remaining_capacity'])}")
+        elif disc_info['appendable']:
+            print("✓ Appendable disc detected (multi-session capable)")
+            print(f"  Existing tracks: {disc_info['tracks']}")
+            print("  Status: Open for additional sessions")
+            print("\n  You can add more tracks to this disc!")
+        elif disc_info['finalized']:
+            print("⚠ Finalized disc detected")
+            print(f"  Existing tracks: {disc_info['tracks']}")
+            print("  Status: Closed/Finalized")
+            print("\n  This disc cannot accept additional tracks.")
+            print("  Use a CD-RW and erase it, or use a different disc.")
+        else:
+            print("? Unknown disc status")
+            print(f"  Existing tracks: {disc_info['tracks']}")
+        
+        print("="*70)
         
     def calculate_file_checksum(self, file_path: str, algorithm: str = 'sha256') -> Optional[str]:
         """
@@ -1642,10 +1743,12 @@ class AudioCDWriter:
             return False
     
     def burn_audio_cd(self, audio_files: List[str], normalize: bool = True, speed: int = 8, 
-                     dry_run: bool = False, use_cdtext: bool = True, 
-                     track_gaps: Optional[List[float]] = None,
-                     fade_ins: Optional[List[float]] = None,
-                     fade_outs: Optional[List[float]] = None) -> bool:
+                 dry_run: bool = False, use_cdtext: bool = True, 
+                 track_gaps: Optional[List[float]] = None,
+                 fade_ins: Optional[List[float]] = None,
+                 fade_outs: Optional[List[float]] = None,
+                 multi_session: bool = False,
+                 finalize: bool = True) -> bool:
         """
         Burn audio files to CD in the specified order with optional CD-TEXT, custom gaps, and fades.
         
@@ -1666,6 +1769,15 @@ class AudioCDWriter:
         if dry_run:
             print("\n" + "="*70)
             print("DRY RUN MODE - NO ACTUAL BURNING WILL OCCUR")
+            print("="*70)
+        
+        if multi_session:
+            print("\n" + "="*70)
+            print("MULTI-SESSION MODE - ADDING TRACKS TO EXISTING DISC")
+            if not finalize:
+                print("Disc will remain OPEN for future sessions")
+            else:
+                print("Disc will be FINALIZED after this session")
             print("="*70)
         
         # Ensure files are sorted by track number if they have track numbers in filename
@@ -1923,10 +2035,13 @@ class AudioCDWriter:
             burn_cmd = [
                 'cdrdao', 'write',
                 '--device', self.device,
-                '--speed', str(speed),
-                '--eject',
-                toc_file
+                '--speed', str(speed)
             ]
+
+            if multi_session and not finalize:
+                burn_cmd.append('--multi')
+
+            burn_cmd.extend(['--eject', toc_file])
             
             result = subprocess.run(burn_cmd)
             
@@ -1939,12 +2054,17 @@ class AudioCDWriter:
                     '-v',
                     '-audio',
                     '-pad',
-                    f'speed={speed}',
-                    '-eject'
-                ] + wav_files
+                    f'speed={speed}'
+                ]
+                
+                if multi_session and not finalize:
+                    burn_cmd.append('-multi')
+                
+                burn_cmd.append('-eject')
+                burn_cmd.extend(wav_files)
                 
                 result = subprocess.run(burn_cmd)
-            
+
             return result.returncode == 0
     
     def create_cue_sheet(self, audio_files: List[str], output_file: str = "audio.cue"):
@@ -2902,7 +3022,58 @@ Media is rated for maximum burn speed (e.g., 52x)
 - It's safe to burn slower than the rating
 - Never burn faster than the media rating
 ═══════════════════════════════════════════════════════════════════════"""
+    @staticmethod
+    def multi_session_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+MULTI-SESSION SUPPORT EXPLAINED
+═══════════════════════════════════════════════════════════════════════
 
+Multi-session burning allows you to add tracks to a CD that hasn't been
+finalized, making it possible to use a CD across multiple burn sessions.
+
+WHAT IS MULTI-SESSION?
+When you burn a CD without finalizing it, the disc remains "open" and
+can accept additional tracks in future sessions. Each burn session adds
+more tracks until you finalize the disc.
+
+HOW IT WORKS:
+1. First burn: Add tracks 1-5, leave disc OPEN
+2. Second burn: Add tracks 6-10 to the same disc, leave OPEN
+3. Third burn: Add tracks 11-15, FINALIZE the disc
+Result: One CD with 15 tracks from 3 different burn sessions
+
+FINALIZE vs KEEP OPEN:
+- FINALIZE: Closes the disc, no more tracks can be added
+  - Required for maximum compatibility with CD players
+  - Disc is complete and ready to use anywhere
+
+- KEEP OPEN: Leaves disc appendable for future sessions
+  - Can add more tracks later
+  - Some older CD players may not read open discs
+  - Modern drives handle open discs fine
+
+DISC COMPATIBILITY:
+✓ CD-R: Supports multi-session (most common)
+✓ CD-RW: Supports multi-session (can also erase and start over)
+✗ Some older CD players: May only read finalized discs
+✗ Car stereos: Often require finalized discs
+
+USE CASES:
+- Building a compilation over time
+- Adding tracks as you acquire them
+- Testing tracks before finalizing
+- Filling a CD to exact capacity across multiple burns
+
+IMPORTANT NOTES:
+- Each session adds a ~14MB "lead-in/lead-out" overhead
+- Too many sessions can waste disc space
+- Always finalize before giving CD to someone
+- Check disc status before adding tracks
+
+TIP: If you're unsure whether you'll add more tracks, keep the disc
+     open. You can always finalize later without adding tracks.
+═══════════════════════════════════════════════════════════════════════"""
 
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
@@ -2927,17 +3098,19 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\n=== Enhanced CD Burner with CD-TEXT, Gaps, Fades & Verification ===")
+        print("\nSinge 1.1.1")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
-        print("4. Rip audio CD (preserves track order)")
-        print("5. Verify last burned CD")
-        print("6. Create CUE sheet")
-        print("7. Help topics")
-        print("8. Exit")
-        
-        choice = input("\nSelect option (1-8): ").strip()
+        print("4. Add tracks to existing CD (multi-session)")
+        print("5. Check disc status")
+        print("6. Rip audio CD (preserves track order)")
+        print("7. Verify last burned CD")
+        print("8. Create CUE sheet")
+        print("9. Help topics")
+        print("10. Exit")
+
+        choice = input("\nSelect option (1-10): ").strip()
         
         if choice in ['1', '2', '3']:
             # Common workflow for all audio CD burning options
@@ -3139,6 +3312,159 @@ def main():
                 print("\n✗ Failed to burn audio CD")
         
         elif choice == '4':
+            # Multi-session: Add tracks to existing CD
+            print("\n" + "="*70)
+            print("MULTI-SESSION MODE: Add Tracks to Existing CD")
+            print("="*70)
+            
+            # Check disc status first
+            disc_info = writer.check_disc_status()
+            writer.display_disc_status(disc_info)
+            
+            if not disc_info['inserted']:
+                print("\nPlease insert a disc and try again.")
+                continue
+            
+            if disc_info['finalized']:
+                print("\n✗ This disc is finalized and cannot accept more tracks.")
+                print("  Use a CD-RW and erase it, or use a different disc.")
+                continue
+            
+            if disc_info['blank']:
+                print("\n⚠ This is a blank disc. Use regular burn mode (option 1, 2, or 3) instead.")
+                response = input("Continue with multi-session mode anyway? (y/n): ").strip().lower()
+                if response != 'y':
+                    continue
+            
+            # Get files to add
+            files = []
+            print("\nEnter audio file paths to ADD to the disc")
+            print("Enter one file per line, empty line to finish:")
+            
+            while True:
+                file_path = input().strip()
+                if not file_path:
+                    break
+                files.append(file_path)
+            
+            if not files:
+                continue
+            
+            # Organize files by track number from metadata
+            organized_files = organizer.organize_by_track_number(files)
+            
+            # Configure track gaps
+            track_gaps = writer.configure_track_gaps(len(organized_files))
+            
+            # Display gap preview
+            track_names = [os.path.basename(f) for f in organized_files]
+            writer.display_gap_preview(track_names, track_gaps)
+            
+            # Configure fade effects
+            print("\n" + "="*70)
+            print("Configure fade in/out effects for tracks")
+            print("="*70)
+            fade_ins, fade_outs = writer.configure_fades(len(organized_files), track_names)
+            
+            # Display fade preview
+            writer.display_fade_preview(track_names, fade_ins, fade_outs)
+            
+            # Calculate and display capacity
+            cd_size = 80
+            capacity_info = writer.calculate_disc_capacity(organized_files, cd_size, track_gaps)
+            writer.display_capacity_summary(capacity_info)
+            
+            if not capacity_info['fits_on_disc']:
+                print("\n✗ Cannot proceed - files exceed disc capacity")
+                continue
+            
+            # Offer track preview
+            while True:
+                preview_response = input("\nPreview tracks before burning? (y/n/?): ").strip().lower()
+                if preview_response == '?':
+                    print(help_sys.preview_help())
+                elif preview_response == 'y':
+                    writer.interactive_preview_menu(organized_files)
+                    break
+                elif preview_response == 'n':
+                    break
+                else:
+                    print("Please enter 'y' for yes, 'n' for no, or '?' for help")
+            
+            # Ask about track order
+            while True:
+                response = input("\nProceed with this configuration? (y/n/?): ").strip().lower()
+                if response == '?':
+                    print(help_sys.track_order_help())
+                elif response == 'y':
+                    break
+                elif response == 'n':
+                    print("Cancelled.")
+                    break
+                else:
+                    print("Please enter 'y' for yes, 'n' for no, or '?' for help")
+            
+            if response != 'y':
+                continue
+            
+            # Ask about CD-TEXT
+            use_cdtext = writer.ask_yes_no_with_help(
+                "Enable CD-TEXT (embed track names/artist info)?",
+                help_sys.cdtext_help()
+            )
+            
+            # Ask about normalization
+            normalize = writer.ask_yes_no_with_help(
+                "Normalize audio levels?",
+                help_sys.normalize_audio_help()
+            )
+            
+            # Ask if should finalize
+            finalize = writer.ask_yes_no_with_help(
+                "Finalize disc after adding tracks? (no = keep open for more sessions)",
+                help_sys.multi_session_help()
+            )
+            
+            # Ask about burn speed
+            while True:
+                speed_response = input("Burn speed (4/8/16/?): ").strip()
+                if speed_response == '?':
+                    print(help_sys.burn_speed_help())
+                elif speed_response in ['4', '8', '16']:
+                    burn_speed = int(speed_response)
+                    break
+                else:
+                    burn_speed = 8
+                    break
+            
+            print("\n" + "="*70)
+            print("READY TO ADD TRACKS (MULTI-SESSION)")
+            print("="*70)
+            print("\nThe disc should already be in the drive.")
+            input("Press Enter when ready to start burning...")
+            
+            if writer.burn_audio_cd(organized_files, normalize, burn_speed,
+                                use_cdtext=use_cdtext, track_gaps=track_gaps,
+                                fade_ins=fade_ins, fade_outs=fade_outs,
+                                multi_session=True, finalize=finalize):
+                print("\n" + "="*70)
+                print("✓✓✓ TRACKS ADDED SUCCESSFULLY! ✓✓✓")
+                print("="*70)
+                if finalize:
+                    print("\n  Disc has been finalized.")
+                    print("  It is now complete and compatible with all CD players.")
+                else:
+                    print("\n  Disc remains OPEN - you can add more tracks later.")
+                    print("  Remember to finalize it before giving to others!")
+            else:
+                print("\n✗ Failed to add tracks")
+        
+        elif choice == '5':
+            # Check disc status
+            disc_info = writer.check_disc_status()
+            writer.display_disc_status(disc_info)
+        
+        elif choice == '6':
             output_dir = input("Enter output directory (default: ./ripped_tracks): ").strip()
             if not output_dir:
                 output_dir = "./ripped_tracks"
@@ -3149,7 +3475,7 @@ def main():
             else:
                 print("✗ Failed to rip CD")
         
-        elif choice == '5':
+        elif choice == '7':
             # Verify last burned CD
             if not writer.last_burn_wav_files or not writer.last_burn_checksums:
                 print("\n✗ No burn data available for verification.")
@@ -3180,7 +3506,7 @@ def main():
             else:
                 print("Verification cancelled.")
         
-        elif choice == '6':
+        elif choice == '8':
             files = []
             print("\nEnter audio file paths for CUE sheet:")
             while True:
@@ -3193,51 +3519,57 @@ def main():
                 organized_files = organizer.organize_by_track_number(files)
                 writer.create_cue_sheet(organized_files)
         
-        elif choice == '7':
+        elif choice == '9':
             print("\n=== HELP TOPICS ===")
-            print("1. CD Verification (NEW!)")
-            print("2. Fade In/Out Effects")
-            print("3. Track Gaps/Pauses")
-            print("4. CD-TEXT Support")
-            print("5. Folder Scanning")
-            print("6. M3U Playlist Import")
-            print("7. Track Preview")
-            print("8. Audio Normalization")
-            print("9. Track Ordering")
-            print("10. Burn Speed")
-            print("11. CD Media Types")
-            print("12. Back to main menu")
-            
-            help_choice = input("\nSelect help topic (1-12): ").strip()
+            print("1. Multi-Session Support (NEW!)")
+            print("2. CD Verification")
+            print("3. Fade In/Out Effects")
+            print("4. Track Gaps/Pauses")
+            print("5. CD-TEXT Support")
+            print("6. Folder Scanning")
+            print("7. M3U Playlist Import")
+            print("8. Track Preview")
+            print("9. Audio Normalization")
+            print("10. Track Ordering")
+            print("11. Burn Speed")
+            print("12. CD Media Types")
+            print("13. Back to main menu")
+
+            help_choice = input("\nSelect help topic (1-13): ").strip()
             
             if help_choice == '1':
-                print(help_sys.verification_help())
+                print(help_sys.multi_session_help())
             if help_choice == '2':
-                print(help_sys.fade_effects_help())
+                print(help_sys.verification_help())
             if help_choice == '3':
-                print(help_sys.track_gaps_help())
+                print(help_sys.fade_effects_help())
             if help_choice == '4':
-                print(help_sys.cdtext_help())
+                print(help_sys.track_gaps_help())
             if help_choice == '5':
-                print(help_sys.folder_scanning_help())
+                print(help_sys.cdtext_help())
             if help_choice == '6':
-                print(help_sys.playlist_help())
+                print(help_sys.folder_scanning_help())
             if help_choice == '7':
+                print(help_sys.playlist_help())
+            if help_choice == '8':
                 print(help_sys.preview_help())
-            if help_choice == '8':  
+            if help_choice == '9':  
                 print(help_sys.normalize_audio_help())
-            if help_choice == '9':
-                print(help_sys.track_order_help())
             if help_choice == '10':
-                print(help_sys.burn_speed_help())
+                print(help_sys.track_order_help())
             if help_choice == '11':
-                print(help_sys.cd_media_help())
+                print(help_sys.burn_speed_help())
             if help_choice == '12':
+                print(help_sys.cd_media_help())
+            if help_choice == '13':
                 continue
         
-        elif choice == '8':
+        elif choice == '10':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
             print("="*70)
             break
+
+if __name__ == "__main__":
+    main()
