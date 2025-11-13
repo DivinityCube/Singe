@@ -4344,7 +4344,7 @@ TIP: Always leave a minute or two of buffer space for best
     
     @staticmethod
     def playlist_help():
-        return """
+        return r"""
 ═══════════════════════════════════════════════════════════════════════
 M3U/M3U8 PLAYLIST IMPORT EXPLAINED
 ═══════════════════════════════════════════════════════════════════════
