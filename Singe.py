@@ -16,6 +16,177 @@ import urllib.parse
 import urllib.error
 import base64
 import mimetypes
+import shutil
+
+class ProgressBar:
+    """Simple progress bar for terminal display."""
+    
+    def __init__(self, total: int, prefix: str = '', suffix: str = '', length: int = 50):
+        """
+        Initialize progress bar.
+        
+        Args:
+            total: Total number of iterations
+            prefix: Prefix string
+            suffix: Suffix string
+            length: Character length of bar
+        """
+        self.total = total
+        self.prefix = prefix
+        self.suffix = suffix
+        self.length = length
+        self.current = 0
+        self.start_time = time.time()
+    
+    def update(self, current: Optional[int] = None, suffix: Optional[str] = None):
+        """
+        Update progress bar.
+        
+        Args:
+            current: Current iteration (increments by 1 if None)
+            suffix: Optional new suffix text
+        """
+        if current is not None:
+            self.current = current
+        else:
+            self.current += 1
+        
+        if suffix is not None:
+            self.suffix = suffix
+        
+        # Calculate progress
+        percent = 100 * (self.current / float(self.total))
+        filled = int(self.length * self.current // self.total)
+        bar = '█' * filled + '░' * (self.length - filled)
+        
+        # Calculate time
+        elapsed = time.time() - self.start_time
+        if self.current > 0:
+            eta = elapsed * (self.total - self.current) / self.current
+            eta_str = self._format_time(eta)
+        else:
+            eta_str = "--:--"
+        
+        # Print progress bar
+        print(f'\r{self.prefix} |{bar}| {percent:.1f}% {self.suffix} ETA: {eta_str}', end='', flush=True)
+        
+        # Print newline on completion
+        if self.current >= self.total:
+            elapsed_str = self._format_time(elapsed)
+            print(f'\r{self.prefix} |{bar}| 100.0% {self.suffix} Done in {elapsed_str}', flush=True)
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds as MM:SS."""
+        mins = int(seconds // 60)
+        secs = int(seconds % 60)
+        return f"{mins:02d}:{secs:02d}"
+    
+    def finish(self):
+        """Complete the progress bar."""
+        self.update(self.total)
+
+class BurnJob:
+    """Represents a single CD burn job in a batch queue."""
+    
+    def __init__(self, name: str, audio_files: List[str], settings: Dict):
+        """
+        Initialize a burn job.
+        
+        Args:
+            name: Name/description of this burn job
+            audio_files: List of audio file paths for this CD
+            settings: Dictionary of burn settings (normalize, speed, gaps, fades, etc.)
+        """
+        self.name = name
+        self.audio_files = audio_files
+        self.settings = settings
+        self.status = 'pending'  # pending, completed, failed, skipped
+        self.error_message = None
+        self.burn_time = None
+    
+    def get_summary(self) -> str:
+        """Get a summary string for this job."""
+        file_count = len(self.audio_files)
+        status_icon = {
+            'pending': '⏸',
+            'completed': '✓',
+            'failed': '✗',
+            'skipped': '⊘'
+        }.get(self.status, '?')
+        
+        return f"{status_icon} {self.name} ({file_count} tracks)"
+
+class BatchBurnQueue:
+    """Manages a queue of CD burn jobs for sequential processing."""
+    
+    def __init__(self):
+        self.jobs: List[BurnJob] = []
+        self.current_job_index = 0
+    
+    def add_job(self, job: BurnJob):
+        """Add a job to the queue."""
+        self.jobs.append(job)
+    
+    def remove_job(self, index: int) -> bool:
+        """Remove a job from the queue."""
+        if 0 <= index < len(self.jobs):
+            del self.jobs[index]
+            return True
+        return False
+    
+    def get_job(self, index: int) -> Optional[BurnJob]:
+        """Get a job by index."""
+        if 0 <= index < len(self.jobs):
+            return self.jobs[index]
+        return None
+    
+    def get_next_job(self) -> Optional[BurnJob]:
+        """Get the next pending job."""
+        for i in range(self.current_job_index, len(self.jobs)):
+            if self.jobs[i].status == 'pending':
+                self.current_job_index = i
+                return self.jobs[i]
+        return None
+    
+    def get_summary(self) -> str:
+        """Get a summary of the queue."""
+        if not self.jobs:
+            return "Queue is empty"
+        
+        pending = sum(1 for j in self.jobs if j.status == 'pending')
+        completed = sum(1 for j in self.jobs if j.status == 'completed')
+        failed = sum(1 for j in self.jobs if j.status == 'failed')
+        skipped = sum(1 for j in self.jobs if j.status == 'skipped')
+        
+        summary = f"Total: {len(self.jobs)} jobs | "
+        summary += f"Pending: {pending} | Completed: {completed}"
+        if failed > 0:
+            summary += f" | Failed: {failed}"
+        if skipped > 0:
+            summary += f" | Skipped: {skipped}"
+        
+        return summary
+    
+    def display_queue(self):
+        """Display the current queue status."""
+        print("\n" + "="*70)
+        print("BATCH BURN QUEUE")
+        print("="*70)
+        
+        if not self.jobs:
+            print("\nQueue is empty")
+        else:
+            print(f"\n{self.get_summary()}\n")
+            print("-"*70)
+            
+            for i, job in enumerate(self.jobs, 1):
+                print(f"{i}. {job.get_summary()}")
+                if job.status == 'failed' and job.error_message:
+                    print(f"   Error: {job.error_message}")
+                elif job.status == 'completed' and job.burn_time:
+                    print(f"   Burn time: {job.burn_time:.1f}s")
+        
+        print("="*70)
 
 class AudioCDWriter:
     # Supported audio file extensions
@@ -1171,17 +1342,17 @@ class AudioCDWriter:
         results = {}
         success_count = 0
         
+        progress = ProgressBar(len(audio_files), prefix='Embedding art:', suffix='', length=40)
+        
         for i, audio_file in enumerate(audio_files, 1):
-            print(f"\n[{i}/{len(audio_files)}] {Path(audio_file).name}")
+            track_name = Path(audio_file).name[:30]
+            progress.update(i, suffix=track_name)
             
             success = self.embed_album_art(audio_file, image_file)
             results[audio_file] = success
             
             if success:
-                print("  ✓ Album art embedded successfully")
                 success_count += 1
-            else:
-                print("  ✗ Failed to embed album art")
         
         print("\n" + "="*70)
         print("BATCH EMBEDDING SUMMARY")
@@ -1404,6 +1575,172 @@ class AudioCDWriter:
             
             else:
                 print("Invalid option")
+    
+    def batch_burn_interactive(self, queue: BatchBurnQueue):
+        """
+        Interactive batch burn execution - processes all jobs in queue.
+        
+        Args:
+            queue: BatchBurnQueue with jobs to process
+        """
+        if not queue.jobs:
+            print("\n✗ Queue is empty. Add jobs first.")
+            return
+        
+        # Display queue summary
+        queue.display_queue()
+        
+        pending_count = sum(1 for j in queue.jobs if j.status == 'pending')
+        
+        if pending_count == 0:
+            print("\n✗ No pending jobs in queue.")
+            return
+        
+        print(f"\nReady to burn {pending_count} CD(s) sequentially.")
+        print("\nIMPORTANT:")
+        print("- Have blank CDs ready")
+        print("- You'll be prompted to insert each disc")
+        print("- Process cannot be paused once started")
+        print("- Each job uses its configured settings")
+        
+        confirm = input("\nStart batch burn process? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Batch burn cancelled.")
+            return
+        
+        # Process each job
+        print("\n" + "="*70)
+        print("BATCH BURN EXECUTION")
+        print("="*70)
+        
+        start_time = time.time()
+        jobs_completed = 0
+        jobs_failed = 0
+        
+        # Initialize batch progress bar
+        batch_progress = ProgressBar(pending_count, prefix='Batch progress:', suffix='Complete', length=50)
+        batch_progress.update(0)
+        
+        while True:
+            job = queue.get_next_job()
+            if not job:
+                break
+            
+            job_num = queue.current_job_index + 1
+            
+            print("\n" + "="*70)
+            print(f"JOB {job_num}/{len(queue.jobs)}: {job.name}")
+            print("="*70)
+            print(f"Tracks: {len(job.audio_files)}")
+            print(f"Settings: Speed={job.settings.get('speed', 8)}x, "
+                  f"Normalize={job.settings.get('normalize', True)}, "
+                  f"CD-TEXT={job.settings.get('use_cdtext', True)}")
+            
+            # Wait for user to insert disc
+            print("\n" + "-"*70)
+            input(f"Insert blank CD for '{job.name}' and press Enter...")
+            print("-"*70)
+            
+            # Check disc status
+            print("\nChecking disc status...")
+            disc_info = self.check_disc_status()
+            
+            if not disc_info['inserted']:
+                print("\n✗ No disc detected!")
+                choice = input("Skip this job? (y/n): ").strip().lower()
+                if choice == 'y':
+                    job.status = 'skipped'
+                    job.error_message = "No disc inserted"
+                    continue
+                else:
+                    print("Aborting batch burn.")
+                    break
+            
+            if not disc_info['blank']:
+                print("\n⚠ WARNING: Disc is not blank!")
+                choice = input("Continue anyway? (y/n): ").strip().lower()
+                if choice != 'y':
+                    job.status = 'skipped'
+                    job.error_message = "Disc not blank"
+                    continue
+            
+            # Execute burn
+            print(f"\nBurning '{job.name}'...")
+            job_start = time.time()
+            
+            try:
+                success = self.burn_audio_cd(
+                    audio_files=job.audio_files,
+                    normalize=job.settings.get('normalize', True),
+                    speed=job.settings.get('speed', 8),
+                    dry_run=False,
+                    use_cdtext=job.settings.get('use_cdtext', True),
+                    track_gaps=job.settings.get('track_gaps'),
+                    fade_ins=job.settings.get('fade_ins'),
+                    fade_outs=job.settings.get('fade_outs'),
+                    multi_session=job.settings.get('multi_session', False),
+                    finalize=job.settings.get('finalize', True)
+                )
+                
+                job.burn_time = time.time() - job_start
+                
+                if success:
+                    job.status = 'completed'
+                    jobs_completed += 1
+                    batch_progress.update(jobs_completed)
+                    print(f"\n✓ '{job.name}' burned successfully in {job.burn_time:.1f}s")
+                else:
+                    job.status = 'failed'
+                    job.error_message = "Burn operation failed"
+                    jobs_failed += 1
+                    batch_progress.update(jobs_completed)
+                    print(f"\n✗ '{job.name}' failed")
+                    
+                    choice = input("\nContinue with remaining jobs? (y/n): ").strip().lower()
+                    if choice != 'y':
+                        print("Aborting batch burn.")
+                        break
+            
+            except Exception as e:
+                job.status = 'failed'
+                job.error_message = str(e)
+                jobs_failed += 1
+                batch_progress.update(jobs_completed)
+                print(f"\n✗ Error burning '{job.name}': {e}")
+                
+                choice = input("\nContinue with remaining jobs? (y/n): ").strip().lower()
+                if choice != 'y':
+                    print("Aborting batch burn.")
+                    break
+        
+        # Finalize batch progress bar
+        batch_progress.finish()
+        
+        # Final summary
+        total_time = time.time() - start_time
+        
+        print("\n" + "="*70)
+        print("BATCH BURN SUMMARY")
+        print("="*70)
+        print(f"\nTotal jobs: {len(queue.jobs)}")
+        print(f"Completed: {jobs_completed}")
+        print(f"Failed: {jobs_failed}")
+        print(f"Skipped: {sum(1 for j in queue.jobs if j.status == 'skipped')}")
+        print(f"Pending: {sum(1 for j in queue.jobs if j.status == 'pending')}")
+        print(f"\nTotal time: {total_time/60:.1f} minutes")
+        
+        if jobs_completed > 0:
+            avg_time = sum(j.burn_time for j in queue.jobs if j.burn_time) / jobs_completed
+            print(f"Average burn time: {avg_time:.1f}s per CD")
+        
+        print("\n" + "-"*70)
+        print("Detailed results:")
+        for i, job in enumerate(queue.jobs, 1):
+            print(f"  {i}. {job.get_summary()}")
+            if job.error_message:
+                print(f"     Error: {job.error_message}")
+        
+        print("="*70)
     
     def configure_fades(self, num_tracks: int, track_names: List[str]) -> Tuple[List[float], List[float]]:
         """
@@ -2258,9 +2595,13 @@ class AudioCDWriter:
         failed_files = []
         
         print("\nCalculating disc capacity...")
+        progress = ProgressBar(len(audio_files), prefix='Analyzing:', suffix='', length=40)
         
         for i, audio_file in enumerate(audio_files, 1):
             duration = self.get_audio_duration(audio_file)
+            
+            track_name = Path(audio_file).name[:30]
+            progress.update(i, suffix=track_name)
             
             if duration is not None:
                 total_seconds += duration
@@ -2268,11 +2609,8 @@ class AudioCDWriter:
                     'file': audio_file,
                     'duration': duration
                 })
-                # Show progress
-                print(f"  Track {i}/{len(audio_files)}: {Path(audio_file).name} - {self._format_time(duration)}")
             else:
                 failed_files.append(audio_file)
-                print(f"  Track {i}/{len(audio_files)}: {Path(audio_file).name} - [Duration unknown]")
         
         # Add gap time if provided
         gap_time = 0
@@ -2582,11 +2920,14 @@ class AudioCDWriter:
         
         ripped_files = []
         
-        for track in tracks:
+        print("\nRipping audio CD...")
+        progress = ProgressBar(len(tracks), prefix='Ripping:', suffix='', length=40)
+        
+        for i, track in enumerate(tracks, 1):
             track_num = track['number']
             output_file = os.path.join(output_dir, f"track_{track_num:02d}.wav")
             
-            print(f"Ripping Track {track_num}...")
+            progress.update(i, suffix=f'Track {track_num:02d}')
             
             # Use cdparanoia to rip the track
             result = subprocess.run(
@@ -2596,9 +2937,8 @@ class AudioCDWriter:
             
             if result.returncode == 0:
                 ripped_files.append(output_file)
-                print(f"✓ Track {track_num} ripped successfully")
             else:
-                print(f"✗ Failed to rip track {track_num}")
+                pass  # Error already shown by progress bar
         
         return ripped_files
     
@@ -2738,6 +3078,8 @@ class AudioCDWriter:
         total_conversions = len(input_files) * len(formats)
         current = 0
         
+        progress = ProgressBar(total_conversions, prefix='Converting:', suffix='', length=50)
+        
         for input_file in input_files:
             if not os.path.exists(input_file):
                 print(f"\n✗ File not found: {input_file}")
@@ -2759,17 +3101,12 @@ class AudioCDWriter:
                 
                 output_file = os.path.join(output_dir, f"{base_name}.{ext}")
                 
-                print(f"\n[{current}/{total_conversions}] Converting: {Path(input_file).name}")
-                print(f"  → {fmt.upper()} ({quality}): {Path(output_file).name}")
+                # Update progress bar
+                progress_text = f"{Path(input_file).name[:20]} → {fmt.upper()}"
+                progress.update(current, suffix=progress_text)
                 
                 if self.convert_audio_format(input_file, output_file, fmt, quality):
                     results[fmt].append(output_file)
-                    
-                    # Get file size
-                    size_mb = os.path.getsize(output_file) / (1024 * 1024)
-                    print(f"  ✓ Success! ({size_mb:.2f} MB)")
-                else:
-                    print(f"  ✗ Failed to convert to {fmt}")
         
         # Summary
         print("\n" + "="*70)
@@ -2996,8 +3333,11 @@ class AudioCDWriter:
                 print("\nPreparing files for disc identification...")
                 temp_wav_files = []
                 with tempfile.TemporaryDirectory() as lookup_temp_dir:
+                    prep_progress = ProgressBar(len(audio_files_sorted), prefix='Preparing:', suffix='', length=40)
                     for i, audio_file in enumerate(audio_files_sorted, 1):
                         temp_wav = os.path.join(lookup_temp_dir, f"temp_{i:02d}.wav")
+                        track_name = Path(audio_file).name[:25]
+                        prep_progress.update(i, suffix=track_name)
                         if self.convert_to_wav(audio_file, temp_wav):
                             temp_wav_files.append(temp_wav)
                     
@@ -3014,8 +3354,10 @@ class AudioCDWriter:
                         else:
                             print("\n✗ No matches found online, falling back to file metadata")
                             # fall back to extracting from files
+                            meta_progress = ProgressBar(len(audio_files_sorted), prefix='Reading metadata:', suffix='', length=40)
                             for i, audio_file in enumerate(audio_files_sorted, 1):
-                                print(f"Reading metadata from track {i}...")
+                                track_name = Path(audio_file).name[:30]
+                                meta_progress.update(i, suffix=track_name)
                                 metadata = self.extract_metadata(audio_file)
                                 tracks_metadata.append(metadata)
                                 
@@ -3069,6 +3411,9 @@ class AudioCDWriter:
             print("STEP 1: Converting files to WAV format and applying fades" + (" (simulated)" if dry_run else ""))
             print("="*70)
             
+            if not dry_run:
+                progress = ProgressBar(len(audio_files_sorted), prefix='Converting:', suffix='', length=40)
+            
             for i, audio_file in enumerate(audio_files_sorted, 1):
                 if not os.path.exists(audio_file):
                     print(f"Warning: File not found: {audio_file}")
@@ -3087,23 +3432,28 @@ class AudioCDWriter:
                     fade_desc.append(f"↘{fade_out}s out")
                 
                 if fade_desc:
-                    print(f"{'[DRY RUN] ' if dry_run else ''}Track {i}: {os.path.basename(audio_file)}")
-                    print(f"  Converting with fades: {', '.join(fade_desc)}")
+                    if dry_run:
+                        print(f"[DRY RUN] Track {i}: {os.path.basename(audio_file)}")
+                        print(f"  Converting with fades: {', '.join(fade_desc)}")
                 else:
-                    print(f"{'[DRY RUN] ' if dry_run else ''}Track {i}: {os.path.basename(audio_file)}")
-                    print(f"  Converting (no fades)")
+                    if dry_run:
+                        print(f"[DRY RUN] Track {i}: {os.path.basename(audio_file)}")
+                        print(f"  Converting (no fades)")
                 
                 if not dry_run:
+                    # Update progress bar
+                    track_name = os.path.basename(audio_file)[:30]
+                    progress.update(i, suffix=f'{track_name}')
+                    
                     if self.apply_fade_effects(audio_file, wav_output, fade_in, fade_out):
                         wav_files.append(wav_output)
                         
                         # Calculate checksum for later verification
-                        print(f"  Calculating checksum for verification...")
                         checksum = self.calculate_file_checksum(wav_output, 'sha256')
                         if checksum:
                             checksums[wav_output] = checksum
                     else:
-                        print(f"Failed to convert {audio_file}")
+                        pass  # Error shown in apply_fade_effects
                 else:
                     # In dry run, simulate successful conversion
                     wav_files.append(wav_output)
@@ -3124,6 +3474,9 @@ class AudioCDWriter:
                 
                 normalized_files = []
                 
+                if not dry_run:
+                    norm_progress = ProgressBar(len(wav_files), prefix='Normalizing:', suffix='', length=40)
+                
                 for i, wav_file in enumerate(wav_files, 1):
                     norm_output = os.path.join(temp_dir, f"norm_track_{i:02d}.wav")
                     
@@ -3131,6 +3484,9 @@ class AudioCDWriter:
                         print(f"[DRY RUN] Would normalize track {i}: {os.path.basename(wav_file)}")
                         normalized_files.append(wav_file)
                     else:
+                        track_name = os.path.basename(wav_file)[:30]
+                        norm_progress.update(i, suffix=f'{track_name}')
+                        
                         # Use sox for normalization
                         result = subprocess.run(
                             ['sox', wav_file, norm_output, 'norm'],
@@ -4561,6 +4917,265 @@ BEST PRACTICES:
 5. Backup files before batch operations
 ═══════════════════════════════════════════════════════════════════════"""
 
+    @staticmethod
+    def batch_burn_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+BATCH BURN QUEUE EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+The Batch Burn Queue allows you to prepare multiple CDs and burn them
+sequentially without manual intervention between each disc.
+
+WHAT IS BATCH BURNING?
+
+Batch burning lets you:
+- Queue up multiple CD projects
+- Set individual settings for each CD
+- Burn them one after another
+- Only swap discs between burns
+- Track success/failure for each job
+
+IDEAL FOR:
+✓ Burning multiple albums from a collection
+✓ Creating multiple copies of the same disc
+✓ Making compilation CDs for different people
+✓ Archiving music collections to CD
+✓ Producing multiple discs for distribution
+
+HOW IT WORKS:
+
+1. BUILD THE QUEUE
+   - Add multiple "jobs" (CDs) to the queue
+   - Each job has:
+     • Name (e.g., "Beatles - Abbey Road")
+     • Audio files to burn
+     • Individual settings (speed, normalization, etc.)
+
+2. CONFIGURE EACH JOB
+   - Files: Manual entry, folder scan, or playlist
+   - Settings: Use defaults or customize per CD
+   - Name: Give each CD a descriptive name
+
+3. START BATCH PROCESS
+   - Review queue
+   - Start sequential burning
+   - Insert disc when prompted
+   - Process continues automatically
+
+4. TRACK PROGRESS
+   - Real-time status for each job
+   - Completion times tracked
+   - Failed jobs logged with reasons
+   - Final summary report
+
+QUEUE MANAGEMENT:
+
+Add CD to Queue:
+- Enter name and select files
+- Configure settings or use defaults
+- Job added to end of queue
+
+Remove CD from Queue:
+- Select job by number
+- Removes without affecting others
+
+View Queue Details:
+- See all jobs and their settings
+- Check file lists
+- Review configurations
+
+Clear Queue:
+- Remove all jobs at once
+- Start fresh
+
+JOB SETTINGS:
+
+Each job can have individual settings:
+- Burn speed (1-52x)
+- Audio normalization (on/off)
+- CD-TEXT metadata (on/off)
+- Track gaps (custom or default)
+- Fade effects (custom or none)
+- Multi-session mode
+- Finalization
+
+Quick Setup:
+Choose "Use default settings" for fast queue building:
+- Normalize: ON
+- Speed: 8x
+- CD-TEXT: ON
+- Standard gaps
+- No fades
+- Finalize disc
+
+BATCH BURN PROCESS:
+
+1. Review queue summary
+2. Confirm start
+3. For each job:
+   a. Display job name and settings
+   b. Prompt to insert blank disc
+   c. Check disc status
+   d. Burn CD with configured settings
+   e. Mark as completed/failed
+   f. Continue to next job
+4. Display final summary
+
+STATUS INDICATORS:
+
+⏸ Pending   - Not yet burned
+✓ Completed - Successfully burned
+✗ Failed    - Burn error occurred
+⊘ Skipped   - User skipped this job
+
+ERROR HANDLING:
+
+If a job fails:
+- Error is logged with details
+- You're asked: Continue or abort?
+- Other jobs remain in queue
+- Can retry failed jobs later
+
+Common skip reasons:
+- No disc inserted
+- Disc not blank
+- User cancelled
+
+TIME ESTIMATION:
+
+Approximate burn times per CD:
+- 8x speed: 10-12 minutes for full CD
+- 16x speed: 6-8 minutes
+- 4x speed: 18-20 minutes
+
+Total batch time = (burn time + disc swap time) × number of CDs
+
+Example: 5 CDs at 8x speed ≈ 60 minutes total
+
+BEST PRACTICES:
+
+1. PREPARATION
+   - Have all blank CDs ready beforehand
+   - Use same media type for consistency
+   - Test one CD before queuing many
+   - Verify file accessibility
+
+2. ORGANIZATION
+   - Use descriptive job names
+   - Group similar albums together
+   - Keep backup of queue configuration
+   - Note any special requirements
+
+3. SETTINGS
+   - Lower speeds (4-8x) for better quality
+   - Enable normalization for consistent volume
+   - Use CD-TEXT for player compatibility
+   - Test settings on single CD first
+
+4. MONITORING
+   - Stay nearby during batch process
+   - Check first few burns for quality
+   - Have extra blank CDs available
+   - Note which jobs fail for retry
+
+5. QUALITY CONTROL
+   - Verify first burned CD
+   - Spot-check others randomly
+   - Keep failed discs for analysis
+   - Document any recurring issues
+
+WORKFLOW EXAMPLES:
+
+Example 1: Burning 3 Albums
+1. Add "Album 1" with folder scan
+2. Add "Album 2" with playlist
+3. Add "Album 3" manual file entry
+4. Start batch burn
+5. Insert disc when prompted for each
+6. All 3 CDs burned automatically
+
+Example 2: Multiple Copies
+1. Add "Mix CD - Copy 1" with files
+2. Add "Mix CD - Copy 2" (same files)
+3. Add "Mix CD - Copy 3" (same files)
+4. All use identical settings
+5. Burn 3 identical CDs sequentially
+
+Example 3: Different Settings
+1. Add "Classical Album" - slow speed, no normalization
+2. Add "Rock Album" - fast speed, normalize on
+3. Add "Audiobook" - medium speed, no CD-TEXT
+4. Each burns with custom settings
+
+TROUBLESHOOTING:
+
+Problem: Job fails repeatedly
+Solution: Check media quality, reduce burn speed,
+          verify files are not corrupted
+
+Problem: Disc swap takes too long
+Solution: Have next disc ready, keep discs organized,
+          use CD spindle for easy access
+
+Problem: Forgot to add a CD
+Solution: Add new jobs anytime before starting batch,
+          or add after batch completes and run again
+
+Problem: Need to stop batch
+Solution: Choose "no" when asked to continue after error,
+          remaining jobs stay pending for later
+
+ADVANTAGED FEATURES:
+
+Queue Persistence:
+- Queue is active during program session
+- Cleared when exiting to main menu
+- Rebuild queue if needed
+
+Mixed Media:
+- Can queue both 74-min and 80-min CDs
+- Each job checks capacity independently
+- Different settings per job
+
+Flexibility:
+- Pause between jobs (don't insert disc)
+- Skip problematic jobs
+- Continue from where you left off
+- Retry failed jobs by rebuilding queue
+
+RECORD KEEPING:
+
+After batch burn completes:
+- Final summary shows all results
+- Note failed jobs for investigation
+- Track average burn times
+- Plan future batches accordingly
+
+TIPS FOR EFFICIENCY:
+
+- Prepare all files beforehand
+- Have blank CDs stacked in order
+- Use consistent naming scheme
+- Group similar content together
+- Test one before queueing many
+- Use default settings for speed
+- Keep workspace organized
+- Document successful configurations
+
+LIMITATIONS:
+
+- Cannot edit job after adding (remove and re-add)
+- No automatic disc ejection prompts
+- Must be present to swap discs
+- No pause/resume within a job
+- Queue cleared when returning to main menu
+
+With batch burning, you can efficiently create multiple CDs with
+minimal manual intervention, perfect for archiving collections or
+producing multiple copies!
+═══════════════════════════════════════════════════════════════════════"""
+
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
     writer = AudioCDWriter()
@@ -4584,7 +5199,7 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\nSinge 1.1.2")
+        print("\nSinge 1.1.3")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
@@ -4595,10 +5210,11 @@ def main():
         print("8. Create CUE sheet")
         print("9. Export to multiple formats")
         print("10. Album art manager")
-        print("11. Help topics")
-        print("12. Exit")
+        print("11. Batch burn queue")
+        print("12. Help topics")
+        print("13. Exit")
 
-        choice = input("\nSelect option (1-12): ").strip()
+        choice = input("\nSelect option (1-13): ").strip()
         
         if choice in ['1', '2', '3']:
             # Common workflow for all audio CD burning options
@@ -5050,6 +5666,163 @@ def main():
             writer.album_art_manager_interactive()
         
         elif choice == '11':
+            # Batch burn queue
+            batch_queue = BatchBurnQueue()
+            
+            while True:
+                batch_queue.display_queue()
+                
+                print("\nBatch Burn Queue Options:")
+                print("1. Add CD to queue")
+                print("2. Remove CD from queue")
+                print("3. View queue details")
+                print("4. Start batch burn")
+                print("5. Clear queue")
+                print("6. Back to main menu")
+                
+                batch_choice = input("\nSelect option (1-6): ").strip()
+                
+                if batch_choice == '1':
+                    # Add CD to queue
+                    print("\n" + "-"*70)
+                    print("ADD CD TO BATCH QUEUE")
+                    print("-"*70)
+                    
+                    job_name = input("\nEnter name for this CD (e.g., 'Album 1', 'Rock Mix'): ").strip()
+                    if not job_name:
+                        job_name = f"CD {len(batch_queue.jobs) + 1}"
+                    
+                    print("\nHow to add files:")
+                    print("1. Enter file paths manually")
+                    print("2. Scan a folder")
+                    print("3. Use M3U/M3U8 playlist")
+                    
+                    source_choice = input("\nSelect option (1-3): ").strip()
+                    
+                    audio_files = []
+                    
+                    if source_choice == '1':
+                        print("\nEnter audio file paths (one per line, empty line to finish):")
+                        while True:
+                            file_path = input().strip()
+                            if not file_path:
+                                break
+                            audio_files.append(file_path)
+                    
+                    elif source_choice == '2':
+                        folder_path = input("\nEnter folder path: ").strip()
+                        if folder_path:
+                            recursive = input("Scan subdirectories? (y/n): ").strip().lower() == 'y'
+                            audio_files = writer.scan_folder_for_audio(folder_path, recursive)
+                    
+                    elif source_choice == '3':
+                        playlist_path = input("\nEnter M3U/M3U8 playlist path: ").strip()
+                        if playlist_path:
+                            audio_files = writer.parse_m3u_playlist(playlist_path)
+                    
+                    if not audio_files:
+                        print("\n✗ No files selected. Job not added.")
+                        continue
+                    
+                    # Configure settings
+                    print(f"\n{len(audio_files)} file(s) selected.")
+                    print("\nConfigure burn settings:")
+                    
+                    use_defaults = input("Use default settings? (y/n): ").strip().lower() == 'y'
+                    
+                    if use_defaults:
+                        settings = {
+                            'normalize': True,
+                            'speed': 8,
+                            'use_cdtext': True,
+                            'track_gaps': None,
+                            'fade_ins': None,
+                            'fade_outs': None,
+                            'multi_session': False,
+                            'finalize': True
+                        }
+                    else:
+                        normalize = input("Normalize audio? (y/n): ").strip().lower() == 'y'
+                        speed = int(input("Burn speed (1-52, recommended 8): ").strip() or "8")
+                        use_cdtext = input("Use CD-TEXT? (y/n): ").strip().lower() == 'y'
+                        
+                        settings = {
+                            'normalize': normalize,
+                            'speed': speed,
+                            'use_cdtext': use_cdtext,
+                            'track_gaps': None,  # Use defaults
+                            'fade_ins': None,
+                            'fade_outs': None,
+                            'multi_session': False,
+                            'finalize': True
+                        }
+                    
+                    # Create and add job
+                    job = BurnJob(job_name, audio_files, settings)
+                    batch_queue.add_job(job)
+                    
+                    print(f"\n✓ '{job_name}' added to queue")
+                
+                elif batch_choice == '2':
+                    # Remove CD from queue
+                    if not batch_queue.jobs:
+                        print("\n✗ Queue is empty")
+                        continue
+                    
+                    batch_queue.display_queue()
+                    try:
+                        index = int(input("\nEnter job number to remove: ").strip()) - 1
+                        job = batch_queue.get_job(index)
+                        if job:
+                            if batch_queue.remove_job(index):
+                                print(f"\n✓ '{job.name}' removed from queue")
+                        else:
+                            print("\n✗ Invalid job number")
+                    except ValueError:
+                        print("\n✗ Invalid input")
+                
+                elif batch_choice == '3':
+                    # View queue details
+                    batch_queue.display_queue()
+                    
+                    if batch_queue.jobs:
+                        print("\nDetailed information:")
+                        for i, job in enumerate(batch_queue.jobs, 1):
+                            print(f"\n{i}. {job.name}")
+                            print(f"   Status: {job.status}")
+                            print(f"   Tracks: {len(job.audio_files)}")
+                            print(f"   Files: {', '.join(Path(f).name for f in job.audio_files[:3])}..."
+                                  if len(job.audio_files) > 3
+                                  else f"   Files: {', '.join(Path(f).name for f in job.audio_files)}")
+                            print(f"   Settings: Speed={job.settings.get('speed')}x, "
+                                  f"Normalize={job.settings.get('normalize')}, "
+                                  f"CD-TEXT={job.settings.get('use_cdtext')}")
+                    
+                    input("\nPress Enter to continue...")
+                
+                elif batch_choice == '4':
+                    # Start batch burn
+                    writer.batch_burn_interactive(batch_queue)
+                
+                elif batch_choice == '5':
+                    # Clear queue
+                    if batch_queue.jobs:
+                        confirm = input(f"\nClear all {len(batch_queue.jobs)} job(s)? (y/n): ").strip().lower()
+                        if confirm == 'y':
+                            batch_queue.jobs.clear()
+                            batch_queue.current_job_index = 0
+                            print("\n✓ Queue cleared")
+                    else:
+                        print("\n✗ Queue is already empty")
+                
+                elif batch_choice == '6':
+                    # Back to main menu
+                    break
+                
+                else:
+                    print("Invalid option")
+        
+        elif choice == '12':
             print("\n=== HELP TOPICS ===")
             print("1. Multi-Session Support (NEW!)")
             print("2. CD Verification")
@@ -5063,11 +5836,12 @@ def main():
             print("10. Track Ordering")
             print("11. Burn Speed")
             print("12. CD Media Types")
-            print("13. Format Export (NEW!)")
-            print("14. Album Art (NEW!)")
-            print("15. Back to main menu")
+            print("13. Format Export")
+            print("14. Album Art")
+            print("15. Batch Burn Queue (NEW!)")
+            print("16. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-15): ").strip()
+            help_choice = input("\nSelect help topic (1-16): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -5098,9 +5872,11 @@ def main():
             if help_choice == '14':
                 print(help_sys.album_art_help())
             if help_choice == '15':
+                print(help_sys.batch_burn_help())
+            if help_choice == '16':
                 continue
         
-        elif choice == '12':
+        elif choice == '13':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
