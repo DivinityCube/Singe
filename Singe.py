@@ -14,6 +14,8 @@ import time
 import urllib.request
 import urllib.parse
 import urllib.error
+import base64
+import mimetypes
 
 class AudioCDWriter:
     # Supported audio file extensions
@@ -943,6 +945,465 @@ class AudioCDWriter:
             tracks_metadata.append(track_metadata)
         
         return tracks_metadata, album_info
+    
+    def embed_album_art(self, audio_file: str, image_file: str) -> bool:
+        """
+        Embed album art into an audio file using ffmpeg.
+        
+        Args:
+            audio_file: Path to the audio file
+            image_file: Path to the image file (JPG, PNG, etc.)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not os.path.exists(audio_file):
+            print(f"✗ Audio file not found: {audio_file}")
+            return False
+        
+        if not os.path.exists(image_file):
+            print(f"✗ Image file not found: {image_file}")
+            return False
+        
+        # Check if image file is valid
+        image_ext = Path(image_file).suffix.lower()
+        if image_ext not in ['.jpg', '.jpeg', '.png', '.bmp', '.gif']:
+            print(f"✗ Unsupported image format: {image_ext}")
+            print("  Supported: JPG, PNG, BMP, GIF")
+            return False
+        
+        audio_ext = Path(audio_file).suffix.lower()
+        temp_output = audio_file + '.tmp' + audio_ext
+        
+        try:
+            # Format-specific embedding
+            if audio_ext == '.mp3':
+                # MP3 uses ID3v2 tags
+                result = subprocess.run([
+                    'ffmpeg', '-i', audio_file, '-i', image_file,
+                    '-map', '0:a', '-map', '1:0',
+                    '-c', 'copy',
+                    '-id3v2_version', '3',
+                    '-metadata:s:v', 'title=Album cover',
+                    '-metadata:s:v', 'comment=Cover (front)',
+                    temp_output, '-y'
+                ], capture_output=True, text=True)
+            
+            elif audio_ext in ['.m4a', '.mp4', '.m4v']:
+                # M4A/MP4 uses MP4 metadata
+                result = subprocess.run([
+                    'ffmpeg', '-i', audio_file, '-i', image_file,
+                    '-map', '0:a', '-map', '1:0',
+                    '-c', 'copy',
+                    '-disposition:v:0', 'attached_pic',
+                    temp_output, '-y'
+                ], capture_output=True, text=True)
+            
+            elif audio_ext == '.flac':
+                # FLAC supports embedded pictures
+                result = subprocess.run([
+                    'ffmpeg', '-i', audio_file, '-i', image_file,
+                    '-map', '0:a', '-map', '1:0',
+                    '-c', 'copy',
+                    '-metadata:s:v', 'title=Album cover',
+                    '-metadata:s:v', 'comment=Cover (front)',
+                    '-disposition:v:0', 'attached_pic',
+                    temp_output, '-y'
+                ], capture_output=True, text=True)
+            
+            elif audio_ext == '.ogg':
+                # OGG Vorbis supports embedded pictures
+                result = subprocess.run([
+                    'ffmpeg', '-i', audio_file, '-i', image_file,
+                    '-map', '0:a', '-map', '1:0',
+                    '-c', 'copy',
+                    '-metadata:s:v', 'title=Album cover',
+                    '-metadata:s:v', 'comment=Cover (front)',
+                    temp_output, '-y'
+                ], capture_output=True, text=True)
+            
+            else:
+                print(f"✗ Album art not supported for {audio_ext} format")
+                print("  Supported: MP3, M4A, FLAC, OGG")
+                return False
+            
+            if result.returncode == 0:
+                # Replace original file with the new one
+                os.replace(temp_output, audio_file)
+                return True
+            else:
+                print(f"✗ Error embedding album art: {result.stderr}")
+                if os.path.exists(temp_output):
+                    os.remove(temp_output)
+                return False
+        
+        except FileNotFoundError:
+            print("✗ ffmpeg not installed. Install with: sudo apt-get install ffmpeg")
+            return False
+        except Exception as e:
+            print(f"✗ Error: {e}")
+            if os.path.exists(temp_output):
+                os.remove(temp_output)
+            return False
+    
+    def extract_album_art(self, audio_file: str, output_file: Optional[str] = None) -> Optional[str]:
+        """
+        Extract album art from an audio file.
+        
+        Args:
+            audio_file: Path to the audio file
+            output_file: Optional output path for the image (auto-generated if None)
+            
+        Returns:
+            Path to extracted image file or None if no art found/error
+        """
+        if not os.path.exists(audio_file):
+            print(f"✗ Audio file not found: {audio_file}")
+            return None
+        
+        try:
+            # First, check if the file has embedded art
+            probe_result = subprocess.run([
+                'ffprobe', '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_streams',
+                audio_file
+            ], capture_output=True, text=True)
+            
+            if probe_result.returncode != 0:
+                return None
+            
+            data = json.loads(probe_result.stdout)
+            has_video = False
+            
+            for stream in data.get('streams', []):
+                if stream.get('codec_type') == 'video':
+                    has_video = True
+                    break
+            
+            if not has_video:
+                return None
+            
+            # Generate output filename if not provided
+            if output_file is None:
+                base_name = Path(audio_file).stem
+                output_file = f"{base_name}_cover.jpg"
+            
+            # Extract the album art
+            result = subprocess.run([
+                'ffmpeg', '-i', audio_file,
+                '-an', '-vcodec', 'copy',
+                output_file, '-y'
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0 and os.path.exists(output_file):
+                return output_file
+            else:
+                return None
+        
+        except Exception as e:
+            print(f"✗ Error extracting album art: {e}")
+            return None
+    
+    def check_album_art(self, audio_file: str) -> Dict:
+        """
+        Check if an audio file has embedded album art.
+        
+        Args:
+            audio_file: Path to the audio file
+            
+        Returns:
+            Dictionary with album art information
+        """
+        info = {
+            'has_art': False,
+            'format': None,
+            'width': None,
+            'height': None,
+            'size': None
+        }
+        
+        if not os.path.exists(audio_file):
+            return info
+        
+        try:
+            result = subprocess.run([
+                'ffprobe', '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_streams',
+                audio_file
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                
+                for stream in data.get('streams', []):
+                    if stream.get('codec_type') == 'video':
+                        info['has_art'] = True
+                        info['format'] = stream.get('codec_name', 'unknown')
+                        info['width'] = stream.get('width')
+                        info['height'] = stream.get('height')
+                        break
+        
+        except Exception:
+            pass
+        
+        return info
+    
+    def batch_embed_album_art(self, audio_files: List[str], image_file: str) -> Dict[str, bool]:
+        """
+        Embed the same album art into multiple audio files.
+        
+        Args:
+            audio_files: List of audio file paths
+            image_file: Path to the image file
+            
+        Returns:
+            Dictionary mapping file paths to success status
+        """
+        print("\n" + "="*70)
+        print("BATCH ALBUM ART EMBEDDING")
+        print("="*70)
+        print(f"\nEmbedding art into {len(audio_files)} file(s)")
+        print(f"Image: {Path(image_file).name}")
+        print("-"*70)
+        
+        results = {}
+        success_count = 0
+        
+        for i, audio_file in enumerate(audio_files, 1):
+            print(f"\n[{i}/{len(audio_files)}] {Path(audio_file).name}")
+            
+            success = self.embed_album_art(audio_file, image_file)
+            results[audio_file] = success
+            
+            if success:
+                print("  ✓ Album art embedded successfully")
+                success_count += 1
+            else:
+                print("  ✗ Failed to embed album art")
+        
+        print("\n" + "="*70)
+        print("BATCH EMBEDDING SUMMARY")
+        print("="*70)
+        print(f"\nSuccessfully embedded: {success_count}/{len(audio_files)}")
+        print(f"Failed: {len(audio_files) - success_count}/{len(audio_files)}")
+        print("="*70)
+        
+        return results
+    
+    def album_art_manager_interactive(self):
+        """
+        Interactive menu for managing album art in audio files.
+        """
+        while True:
+            print("\n" + "="*70)
+            print("ALBUM ART MANAGER")
+            print("="*70)
+            print("\nOptions:")
+            print("1. Embed album art into audio file(s)")
+            print("2. Extract album art from audio file")
+            print("3. Check if file(s) have album art")
+            print("4. Remove album art from file(s)")
+            print("5. Batch embed art into folder")
+            print("6. Back to main menu")
+            
+            choice = input("\nSelect option (1-6): ").strip()
+            
+            if choice == '1':
+                # Embed album art
+                print("\n" + "-"*70)
+                print("EMBED ALBUM ART")
+                print("-"*70)
+                
+                image_path = input("\nEnter path to image file (JPG, PNG, etc.): ").strip()
+                
+                if not os.path.exists(image_path):
+                    print(f"✗ Image file not found: {image_path}")
+                    continue
+                
+                print("\nEnter audio file paths (one per line, empty line to finish):")
+                audio_files = []
+                while True:
+                    file_path = input().strip()
+                    if not file_path:
+                        break
+                    audio_files.append(file_path)
+                
+                if not audio_files:
+                    print("✗ No audio files specified")
+                    continue
+                
+                if len(audio_files) == 1:
+                    success = self.embed_album_art(audio_files[0], image_path)
+                    if success:
+                        print("\n✓ Album art embedded successfully!")
+                    else:
+                        print("\n✗ Failed to embed album art")
+                else:
+                    self.batch_embed_album_art(audio_files, image_path)
+            
+            elif choice == '2':
+                # Extract album art
+                print("\n" + "-"*70)
+                print("EXTRACT ALBUM ART")
+                print("-"*70)
+                
+                audio_path = input("\nEnter path to audio file: ").strip()
+                
+                if not os.path.exists(audio_path):
+                    print(f"✗ Audio file not found: {audio_path}")
+                    continue
+                
+                output_path = input("Enter output image path (or press Enter for auto): ").strip()
+                if not output_path:
+                    output_path = None
+                
+                print("\nExtracting album art...")
+                extracted = self.extract_album_art(audio_path, output_path)
+                
+                if extracted:
+                    print(f"✓ Album art extracted to: {extracted}")
+                    
+                    # Show image info
+                    if os.path.exists(extracted):
+                        size_kb = os.path.getsize(extracted) / 1024
+                        print(f"  File size: {size_kb:.1f} KB")
+                else:
+                    print("✗ No album art found in this file")
+            
+            elif choice == '3':
+                # Check for album art
+                print("\n" + "-"*70)
+                print("CHECK ALBUM ART")
+                print("-"*70)
+                
+                print("\nEnter audio file paths (one per line, empty line to finish):")
+                audio_files = []
+                while True:
+                    file_path = input().strip()
+                    if not file_path:
+                        break
+                    audio_files.append(file_path)
+                
+                if not audio_files:
+                    print("✗ No audio files specified")
+                    continue
+                
+                print("\n" + "="*70)
+                print("ALBUM ART STATUS")
+                print("="*70)
+                
+                for audio_file in audio_files:
+                    print(f"\n{Path(audio_file).name}")
+                    
+                    if not os.path.exists(audio_file):
+                        print("  ✗ File not found")
+                        continue
+                    
+                    info = self.check_album_art(audio_file)
+                    
+                    if info['has_art']:
+                        print("  ✓ Has album art")
+                        if info['width'] and info['height']:
+                            print(f"    Dimensions: {info['width']}x{info['height']}")
+                        if info['format']:
+                            print(f"    Format: {info['format'].upper()}")
+                    else:
+                        print("  ✗ No album art")
+            
+            elif choice == '4':
+                # Remove album art
+                print("\n" + "-"*70)
+                print("REMOVE ALBUM ART")
+                print("-"*70)
+                
+                print("\nEnter audio file paths (one per line, empty line to finish):")
+                audio_files = []
+                while True:
+                    file_path = input().strip()
+                    if not file_path:
+                        break
+                    audio_files.append(file_path)
+                
+                if not audio_files:
+                    print("✗ No audio files specified")
+                    continue
+                
+                confirm = input(f"\nRemove album art from {len(audio_files)} file(s)? (y/n): ").strip().lower()
+                if confirm != 'y':
+                    print("Cancelled")
+                    continue
+                
+                success_count = 0
+                for i, audio_file in enumerate(audio_files, 1):
+                    print(f"\n[{i}/{len(audio_files)}] {Path(audio_file).name}")
+                    
+                    if not os.path.exists(audio_file):
+                        print("  ✗ File not found")
+                        continue
+                    
+                    audio_ext = Path(audio_file).suffix.lower()
+                    temp_output = audio_file + '.tmp' + audio_ext
+                    
+                    try:
+                        # Strip all video streams (album art)
+                        result = subprocess.run([
+                            'ffmpeg', '-i', audio_file,
+                            '-map', '0:a', '-c', 'copy',
+                            temp_output, '-y'
+                        ], capture_output=True, text=True)
+                        
+                        if result.returncode == 0:
+                            os.replace(temp_output, audio_file)
+                            print("  ✓ Album art removed")
+                            success_count += 1
+                        else:
+                            print("  ✗ Failed to remove album art")
+                            if os.path.exists(temp_output):
+                                os.remove(temp_output)
+                    except Exception as e:
+                        print(f"  ✗ Error: {e}")
+                        if os.path.exists(temp_output):
+                            os.remove(temp_output)
+                
+                print(f"\n✓ Removed album art from {success_count}/{len(audio_files)} file(s)")
+            
+            elif choice == '5':
+                # Batch embed from folder
+                print("\n" + "-"*70)
+                print("BATCH EMBED FROM FOLDER")
+                print("-"*70)
+                
+                folder_path = input("\nEnter folder path: ").strip()
+                
+                if not os.path.isdir(folder_path):
+                    print(f"✗ Folder not found: {folder_path}")
+                    continue
+                
+                image_path = input("Enter path to image file: ").strip()
+                
+                if not os.path.exists(image_path):
+                    print(f"✗ Image file not found: {image_path}")
+                    continue
+                
+                recursive = input("Scan subdirectories? (y/n): ").strip().lower() == 'y'
+                
+                audio_files = self.scan_folder_for_audio(folder_path, recursive)
+                
+                if not audio_files:
+                    print("✗ No audio files found in folder")
+                    continue
+                
+                confirm = input(f"\nEmbed album art into {len(audio_files)} file(s)? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    self.batch_embed_album_art(audio_files, image_path)
+            
+            elif choice == '6':
+                break
+            
+            else:
+                print("Invalid option")
     
     def configure_fades(self, num_tracks: int, track_names: List[str]) -> Tuple[List[float], List[float]]:
         """
@@ -3937,6 +4398,169 @@ All formats support metadata (artist, title, album, etc.)
 Album art is preserved in: MP3, FLAC, AAC/M4A, OGG
 ═══════════════════════════════════════════════════════════════════════"""
 
+    @staticmethod
+    def album_art_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+ALBUM ART EMBEDDING EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Album art (also called cover art) is an image embedded directly into
+audio files, allowing music players to display artwork while playing.
+
+WHAT IS ALBUM ART?
+
+Album art is a digital image (usually JPEG or PNG) that's stored inside
+the audio file itself, not as a separate file. Modern music players,
+smartphones, and car stereos display this artwork automatically.
+
+SUPPORTED FORMATS:
+
+✓ MP3 (ID3v2 tags)
+  - Most common format
+  - Supports front cover, back cover, and more
+  - Maximum recommended size: 1200x1200 pixels
+
+✓ M4A/MP4/AAC (iTunes format)
+  - Native iTunes/Apple format
+  - Excellent compatibility with iOS devices
+  - High-quality image support
+
+✓ FLAC (Lossless)
+  - Supports multiple pictures
+  - Front cover, back cover, artist, etc.
+  - Perfect for archival quality
+
+✓ OGG Vorbis (Open source)
+  - Supports embedded pictures
+  - Good compatibility
+
+✗ WAV (Not supported)
+  - WAV files don't support embedded metadata
+  - Use separate image files or convert to FLAC
+
+IMAGE RECOMMENDATIONS:
+
+Size:
+- Minimum: 300x300 pixels (acceptable)
+- Recommended: 600x600 pixels (good quality)
+- High quality: 1000x1000 or 1200x1200 pixels
+- Maximum: 1400x1400 (larger = bigger file size)
+
+Format:
+- JPEG: Best for photos, smaller files
+- PNG: Best for graphics/text, supports transparency
+- Square aspect ratio (1:1) is standard
+
+File Size:
+- Keep under 500KB for best compatibility
+- 100-200KB is ideal for most uses
+- Very large images can bloat file sizes
+
+FEATURES:
+
+1. EMBED ALBUM ART
+   - Add artwork to single or multiple files
+   - Batch embed same art to entire album
+   - Automatically handles format conversion
+
+2. EXTRACT ALBUM ART
+   - Save embedded artwork as separate image file
+   - Useful for sharing or editing
+   - Auto-detects image format
+
+3. CHECK ALBUM ART
+   - See if files have embedded artwork
+   - View image dimensions and format
+   - Batch check multiple files
+
+4. REMOVE ALBUM ART
+   - Strip artwork from files
+   - Reduce file size
+   - Clean metadata
+
+5. BATCH OPERATIONS
+   - Embed same art into entire folder
+   - Process albums efficiently
+   - Recursive folder scanning
+
+WORKFLOW EXAMPLES:
+
+Adding art to a new album:
+1. Download or scan album cover (square, 1000x1000)
+2. Use "Batch embed from folder"
+3. Select album folder and cover image
+4. All tracks get the same artwork
+
+Extracting art from a file:
+1. Select "Extract album art"
+2. Choose source audio file
+3. Image is saved as FILENAME_cover.jpg
+
+Cleaning up files:
+1. Use "Check album art" to see status
+2. Use "Remove album art" if needed
+3. Re-embed with better quality image
+
+WHERE ALBUM ART APPEARS:
+
+✓ Music players (iTunes, Windows Media Player, VLC)
+✓ Smartphones (iPhone Music, Android players)
+✓ Car stereos (most modern units)
+✓ Portable music players (iPod, etc.)
+✓ Smart speakers (Alexa, Google Home with displays)
+✓ Desktop/taskbar notifications
+✓ Lock screen displays
+
+FILE SIZE IMPACT:
+
+Adding a 200KB album art image to 100 MP3 files:
+- Original album: 500MB
+- With album art: 520MB (4% increase)
+- Minimal impact for huge visual benefit!
+
+COMMON ISSUES:
+
+Problem: Album art doesn't show in player
+Solution: Some players cache artwork. Restart player or
+          rebuild music library.
+
+Problem: Image looks pixelated
+Solution: Use higher resolution source image (1000x1000+)
+
+Problem: Files too large after embedding
+Solution: Use JPEG instead of PNG, or compress image first
+
+Problem: Wrong image shows up
+Solution: Remove old art first, then embed new art
+
+TIPS:
+
+- Use consistent image sizes across your library (e.g., all 1000x1000)
+- Square images (1:1 ratio) work best
+- Download artwork from iTunes, Amazon, or Discogs
+- For classical music, use composer/conductor photos
+- Compilations often use generic artwork or logos
+- Consider different art for different editions (Deluxe, Remaster)
+
+SOURCES FOR ALBUM ART:
+
+- iTunes Store (right-click album → Copy artwork)
+- Amazon Music (high-res artwork available)
+- Discogs.com (community-sourced artwork)
+- MusicBrainz (free, community database)
+- Album artist's official website
+- Your own scans of physical CDs
+
+BEST PRACTICES:
+
+1. Always keep original high-res artwork files
+2. Embed after all other editing is complete
+3. Use same artwork across all tracks in an album
+4. Test playback on target devices
+5. Backup files before batch operations
+═══════════════════════════════════════════════════════════════════════"""
+
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
     writer = AudioCDWriter()
@@ -3960,7 +4584,7 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\nSinge 1.1.1")
+        print("\nSinge 1.1.2")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
@@ -3970,10 +4594,11 @@ def main():
         print("7. Verify last burned CD")
         print("8. Create CUE sheet")
         print("9. Export to multiple formats")
-        print("10. Help topics")
-        print("11. Exit")
+        print("10. Album art manager")
+        print("11. Help topics")
+        print("12. Exit")
 
-        choice = input("\nSelect option (1-11): ").strip()
+        choice = input("\nSelect option (1-12): ").strip()
         
         if choice in ['1', '2', '3']:
             # Common workflow for all audio CD burning options
@@ -4421,6 +5046,10 @@ def main():
                 print("\n✗ No files selected for export")
         
         elif choice == '10':
+            # Album art manager
+            writer.album_art_manager_interactive()
+        
+        elif choice == '11':
             print("\n=== HELP TOPICS ===")
             print("1. Multi-Session Support (NEW!)")
             print("2. CD Verification")
@@ -4435,9 +5064,10 @@ def main():
             print("11. Burn Speed")
             print("12. CD Media Types")
             print("13. Format Export (NEW!)")
-            print("14. Back to main menu")
+            print("14. Album Art (NEW!)")
+            print("15. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-14): ").strip()
+            help_choice = input("\nSelect help topic (1-15): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -4466,9 +5096,11 @@ def main():
             if help_choice == '13':
                 print(help_sys.format_export_help())
             if help_choice == '14':
+                print(help_sys.album_art_help())
+            if help_choice == '15':
                 continue
         
-        elif choice == '11':
+        elif choice == '12':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
