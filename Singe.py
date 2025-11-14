@@ -4645,7 +4645,6 @@ EXAMPLE M3U FILE CONTENT:
 PATH HANDLING:
 • Absolute paths: /home/user/Music/song.mp3
 • Relative paths: ./songs/track.mp3 (relative to playlist location)
-• Windows paths: C:\Music\song.mp3 (converted automatically)
 
 CREATING M3U PLAYLISTS:
 Most music players can create playlists:
@@ -5977,23 +5976,21 @@ def main():
                 if normalize:
                     print("  ✓ Normalized audio levels")
                 
-                # Step 11: Offer verification
-                print("\n" + "="*70)
-                print("VERIFICATION RECOMMENDED")
-                print("="*70)
-                print("Verify the burned CD to ensure data integrity.")
-                
-                verify_method = writer.choose_verification_method()
-                
-                if verify_method:
+                # Step 11: Check config for automatic verification
+                if config_manager.get('verify_after_burn', False):
+                    print("\n" + "="*70)
+                    print("AUTOMATIC VERIFICATION")
+                    print("="*70)
+                    print("Verifying the burned CD (configured in settings)...")
+                    
                     print("\nPlease keep the CD in the drive for verification...")
                     input("Press Enter when ready to verify...")
                     
-                    # Perform verification
+                    # Use quick verification method by default for auto-verify
                     verification_passed = writer.verify_burned_disc(
                         writer.last_burn_wav_files,
                         writer.last_burn_checksums,
-                        verify_method
+                        'quick'
                     )
                     
                     if verification_passed:
@@ -6002,8 +5999,33 @@ def main():
                         print("\n⚠ Verification failed. Consider re-burning at a slower speed")
                         print("   or using different media.")
                 else:
-                    print("\n✓ Skipping verification.")
-                    print("  Your CD should be ready, but verification is recommended.")
+                    # Only offer verification if not configured for automatic verification
+                    print("\n" + "="*70)
+                    print("VERIFICATION RECOMMENDED")
+                    print("="*70)
+                    print("Verify the burned CD to ensure data integrity.")
+                    
+                    verify_method = writer.choose_verification_method()
+                    
+                    if verify_method:
+                        print("\nPlease keep the CD in the drive for verification...")
+                        input("Press Enter when ready to verify...")
+                        
+                        # Perform verification
+                        verification_passed = writer.verify_burned_disc(
+                            writer.last_burn_wav_files,
+                            writer.last_burn_checksums,
+                            verify_method
+                        )
+                        
+                        if verification_passed:
+                            print("\n🎉 SUCCESS! Your CD is perfect and ready to use!")
+                        else:
+                            print("\n⚠ Verification failed. Consider re-burning at a slower speed")
+                            print("   or using different media.")
+                    else:
+                        print("\n✓ Skipping verification.")
+                        print("  Your CD should be ready, but verification is recommended.")
                 
                 print("\nEnjoy your professionally mastered audio CD!")
             else:
