@@ -18,6 +18,260 @@ import base64
 import mimetypes
 import shutil
 
+class ConfigManager:
+    """Manages user configuration settings for Singe."""
+    
+    DEFAULT_CONFIG = {
+        'burn_speed': 8,
+        'normalize_audio': True,
+        'use_cdtext': True,
+        'track_gap': 2,
+        'default_fade_in': 0.0,
+        'default_fade_out': 0.0,
+        'multi_session': False,
+        'finalize_disc': True,
+        'output_format': 'mp3',
+        'output_bitrate': 320,
+        'rip_format': 'flac',
+        'verify_after_burn': False,
+        'eject_after_burn': False,
+        'default_device': None
+    }
+    
+    def __init__(self, config_path: Optional[str] = None):
+        """
+        Initialize configuration manager.
+        
+        Args:
+            config_path: Path to config file. If None, uses default location.
+        """
+        if config_path:
+            self.config_path = Path(config_path)
+        else:
+            # Use user's home directory for config
+            home = Path.home()
+            self.config_path = home / '.singe' / 'config.json'
+        
+        self.config = self.DEFAULT_CONFIG.copy()
+        self.load_config()
+    
+    def load_config(self) -> bool:
+        """
+        Load configuration from file.
+        
+        Returns:
+            True if config loaded successfully, False otherwise
+        """
+        if not self.config_path.exists():
+            return False
+        
+        try:
+            with open(self.config_path, 'r') as f:
+                loaded_config = json.load(f)
+            
+            # Update config with loaded values, keeping defaults for missing keys
+            self.config.update(loaded_config)
+            return True
+        except Exception as e:
+            print(f"Warning: Could not load config: {e}")
+            return False
+    
+    def save_config(self) -> bool:
+        """
+        Save current configuration to file.
+        
+        Returns:
+            True if config saved successfully, False otherwise
+        """
+        try:
+            # Create directory if it doesn't exist
+            self.config_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self.config_path, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            
+            return True
+        except Exception as e:
+            print(f"Error: Could not save config: {e}")
+            return False
+    
+    def get(self, key: str, default=None):
+        """Get configuration value."""
+        return self.config.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set configuration value."""
+        self.config[key] = value
+    
+    def reset_to_defaults(self):
+        """Reset configuration to default values."""
+        self.config = self.DEFAULT_CONFIG.copy()
+    
+    def display_config(self):
+        """Display current configuration."""
+        print("\n" + "="*70)
+        print("CURRENT CONFIGURATION")
+        print("="*70)
+        print(f"\nConfig file: {self.config_path}")
+        print(f"Exists: {'Yes' if self.config_path.exists() else 'No'}\n")
+        print("-"*70)
+        
+        # Group settings by category
+        print("\nBURN SETTINGS:")
+        print(f"  Burn speed: {self.config['burn_speed']}x")
+        print(f"  Normalize audio: {self.config['normalize_audio']}")
+        print(f"  Use CD-TEXT: {self.config['use_cdtext']}")
+        print(f"  Track gap: {self.config['track_gap']}s")
+        print(f"  Default fade in: {self.config['default_fade_in']}s")
+        print(f"  Default fade out: {self.config['default_fade_out']}s")
+        print(f"  Multi-session: {self.config['multi_session']}")
+        print(f"  Finalize disc: {self.config['finalize_disc']}")
+        print(f"  Verify after burn: {self.config['verify_after_burn']}")
+        print(f"  Eject after burn: {self.config['eject_after_burn']}")
+        
+        print("\nFORMAT CONVERSION:")
+        print(f"  Output format: {self.config['output_format']}")
+        print(f"  Output bitrate: {self.config['output_bitrate']} kbps")
+        print(f"  Rip format: {self.config['rip_format']}")
+        
+        print("\nDEVICE:")
+        print(f"  Default device: {self.config['default_device'] or 'Auto-detect'}")
+        
+        print("="*70)
+    
+    def interactive_edit(self):
+        """Interactive configuration editor."""
+        while True:
+            self.display_config()
+            
+            print("\nEDIT OPTIONS:")
+            print("1. Burn speed")
+            print("2. Normalize audio")
+            print("3. Use CD-TEXT")
+            print("4. Track gap")
+            print("5. Default fade in/out")
+            print("6. Multi-session/Finalize")
+            print("7. Verify/Eject after burn")
+            print("8. Format conversion settings")
+            print("9. Default device")
+            print("10. Reset to defaults")
+            print("11. Save configuration")
+            print("12. Back to main menu")
+            
+            choice = input("\nSelect option (1-12): ").strip()
+            
+            if choice == '1':
+                try:
+                    speed = int(input("\nEnter burn speed (1-52): ").strip())
+                    if 1 <= speed <= 52:
+                        self.config['burn_speed'] = speed
+                        print(f"✓ Burn speed set to {speed}x")
+                    else:
+                        print("✗ Invalid speed. Must be between 1 and 52.")
+                except ValueError:
+                    print("✗ Invalid input.")
+            
+            elif choice == '2':
+                response = input("\nNormalize audio? (y/n): ").strip().lower()
+                self.config['normalize_audio'] = (response == 'y')
+                print(f"✓ Normalize audio: {self.config['normalize_audio']}")
+            
+            elif choice == '3':
+                response = input("\nUse CD-TEXT? (y/n): ").strip().lower()
+                self.config['use_cdtext'] = (response == 'y')
+                print(f"✓ Use CD-TEXT: {self.config['use_cdtext']}")
+            
+            elif choice == '4':
+                try:
+                    gap = float(input("\nEnter track gap in seconds (0-5): ").strip())
+                    if 0 <= gap <= 5:
+                        self.config['track_gap'] = gap
+                        print(f"✓ Track gap set to {gap}s")
+                    else:
+                        print("✗ Invalid gap. Must be between 0 and 5.")
+                except ValueError:
+                    print("✗ Invalid input.")
+            
+            elif choice == '5':
+                try:
+                    fade_in = float(input("\nEnter default fade in (seconds, 0-10): ").strip())
+                    fade_out = float(input("Enter default fade out (seconds, 0-10): ").strip())
+                    if 0 <= fade_in <= 10 and 0 <= fade_out <= 10:
+                        self.config['default_fade_in'] = fade_in
+                        self.config['default_fade_out'] = fade_out
+                        print(f"✓ Fade in: {fade_in}s, Fade out: {fade_out}s")
+                    else:
+                        print("✗ Invalid values. Must be between 0 and 10.")
+                except ValueError:
+                    print("✗ Invalid input.")
+            
+            elif choice == '6':
+                response = input("\nEnable multi-session? (y/n): ").strip().lower()
+                self.config['multi_session'] = (response == 'y')
+                response = input("Finalize disc? (y/n): ").strip().lower()
+                self.config['finalize_disc'] = (response == 'y')
+                print(f"✓ Multi-session: {self.config['multi_session']}, Finalize: {self.config['finalize_disc']}")
+            
+            elif choice == '7':
+                response = input("\nVerify after burn? (y/n): ").strip().lower()
+                self.config['verify_after_burn'] = (response == 'y')
+                response = input("Eject after burn? (y/n): ").strip().lower()
+                self.config['eject_after_burn'] = (response == 'y')
+                print(f"✓ Verify: {self.config['verify_after_burn']}, Eject: {self.config['eject_after_burn']}")
+            
+            elif choice == '8':
+                formats = ['mp3', 'flac', 'ogg', 'aac', 'opus', 'wav']
+                print(f"\nAvailable formats: {', '.join(formats)}")
+                fmt = input("Enter default output format: ").strip().lower()
+                if fmt in formats:
+                    self.config['output_format'] = fmt
+                    print(f"✓ Output format: {fmt}")
+                else:
+                    print("✗ Invalid format.")
+                
+                if fmt != 'wav':  # WAV doesn't use bitrate
+                    try:
+                        bitrate = int(input("Enter output bitrate (64-320 kbps): ").strip())
+                        if 64 <= bitrate <= 320:
+                            self.config['output_bitrate'] = bitrate
+                            print(f"✓ Output bitrate: {bitrate} kbps")
+                        else:
+                            print("✗ Invalid bitrate.")
+                    except ValueError:
+                        print("✗ Invalid input.")
+                
+                print(f"\nAvailable rip formats: {', '.join(formats)}")
+                rip_fmt = input("Enter default rip format: ").strip().lower()
+                if rip_fmt in formats:
+                    self.config['rip_format'] = rip_fmt
+                    print(f"✓ Rip format: {rip_fmt}")
+                else:
+                    print("✗ Invalid format.")
+            
+            elif choice == '9':
+                device = input("\nEnter default device path (empty for auto-detect): ").strip()
+                self.config['default_device'] = device if device else None
+                print(f"✓ Default device: {self.config['default_device'] or 'Auto-detect'}")
+            
+            elif choice == '10':
+                confirm = input("\nReset to default settings? (y/n): ").strip().lower()
+                if confirm == 'y':
+                    self.reset_to_defaults()
+                    print("✓ Configuration reset to defaults")
+            
+            elif choice == '11':
+                if self.save_config():
+                    print(f"\n✓ Configuration saved to {self.config_path}")
+                else:
+                    print("\n✗ Failed to save configuration")
+                input("\nPress Enter to continue...")
+            
+            elif choice == '12':
+                break
+            
+            else:
+                print("Invalid option.")
+
 class ProgressBar:
     """Simple progress bar for terminal display."""
     
@@ -203,8 +457,9 @@ class AudioCDWriter:
     DEFAULT_FADE_IN = 0.0
     DEFAULT_FADE_OUT = 0.0
     
-    def __init__(self):
-        self.device = self._detect_cd_device()
+    def __init__(self, config_manager: Optional[ConfigManager] = None):
+        self.config = config_manager if config_manager else ConfigManager()
+        self.device = self.config.get('default_device') or self._detect_cd_device()
         self.last_burn_wav_files = []  # Store WAV files for verification
         self.last_burn_checksums = {}  # Store checksums for verification
     
@@ -1753,48 +2008,61 @@ class AudioCDWriter:
         Returns:
             Tuple of (fade_in_list, fade_out_list) with durations in seconds
         """
+        # Get defaults from config
+        config_fade_in = self.config.get('default_fade_in', self.DEFAULT_FADE_IN)
+        config_fade_out = self.config.get('default_fade_out', self.DEFAULT_FADE_OUT)
+        
         print("\n" + "="*70)
         print("FADE IN/OUT CONFIGURATION")
         print("="*70)
         print("\nFades create smooth transitions at the beginning (fade in) or")
         print("end (fade out) of tracks, gradually increasing or decreasing volume.")
+        print(f"Configured defaults: {config_fade_in}s fade in, {config_fade_out}s fade out")
         
         while True:
             print("\nOptions:")
-            print("1. No fades (keep audio as-is)")
-            print("2. Standard fade out (3 seconds at end of all tracks)")
-            print("3. Standard fade in/out (2s in, 3s out on all tracks)")
-            print("4. Custom fade for all tracks")
-            print("5. Individual fade control per track")
-            print("6. Preset: DJ mix (short crossfade-ready fades)")
-            print("7. Preset: Radio-style (fade out only)")
-            print("8. Preset: Gentle transitions (longer fades)")
-            print("9. View fade effects help")
+            print(f"1. Use configured defaults ({config_fade_in}s in, {config_fade_out}s out)")
+            print("2. No fades (keep audio as-is)")
+            print("3. Standard fade out (3 seconds at end of all tracks)")
+            print("4. Standard fade in/out (2s in, 3s out on all tracks)")
+            print("5. Custom fade for all tracks")
+            print("6. Individual fade control per track")
+            print("7. Preset: DJ mix (short crossfade-ready fades)")
+            print("8. Preset: Radio-style (fade out only)")
+            print("9. Preset: Gentle transitions (longer fades)")
+            print("10. View fade effects help")
             
-            choice = input("\nSelect option (1-9): ").strip()
+            choice = input("\nSelect option (1-10): ").strip()
             
             if choice == '1':
+                # Use configured defaults
+                fade_ins = [config_fade_in] * num_tracks
+                fade_outs = [config_fade_out] * num_tracks
+                print(f"✓ Using configured defaults: {config_fade_in}s fade in, {config_fade_out}s fade out")
+                return fade_ins, fade_outs
+            
+            elif choice == '2':
                 # No fades
                 fade_ins = [0.0] * num_tracks
                 fade_outs = [0.0] * num_tracks
                 print("✓ No fades will be applied")
                 return fade_ins, fade_outs
             
-            elif choice == '2':
+            elif choice == '3':
                 # Standard fade out only
                 fade_ins = [0.0] * num_tracks
                 fade_outs = [3.0] * num_tracks
                 print("✓ 3-second fade out on all tracks")
                 return fade_ins, fade_outs
             
-            elif choice == '3':
+            elif choice == '4':
                 # Standard fade in/out
                 fade_ins = [2.0] * num_tracks
                 fade_outs = [3.0] * num_tracks
                 print("✓ 2-second fade in, 3-second fade out on all tracks")
                 return fade_ins, fade_outs
             
-            elif choice == '4':
+            elif choice == '5':
                 # Custom uniform fades
                 try:
                     fade_in = float(input("Enter fade in duration in seconds (0-10): ").strip())
@@ -1810,7 +2078,7 @@ class AudioCDWriter:
                 except ValueError:
                     print("Invalid input. Please enter numbers.")
             
-            elif choice == '5':
+            elif choice == '6':
                 # Individual fade configuration
                 fade_ins = []
                 fade_outs = []
@@ -1874,28 +2142,28 @@ class AudioCDWriter:
                 else:
                     print("Restarting fade configuration...")
             
-            elif choice == '6':
+            elif choice == '7':
                 # DJ mix preset (short fades for seamless mixing)
                 fade_ins = [0.5] * num_tracks
                 fade_outs = [0.5] * num_tracks
                 print("✓ DJ mix preset: 0.5s fade in/out (crossfade-ready)")
                 return fade_ins, fade_outs
             
-            elif choice == '7':
+            elif choice == '8':
                 # Radio-style preset (fade out only)
                 fade_ins = [0.0] * num_tracks
                 fade_outs = [4.0] * num_tracks
                 print("✓ Radio-style preset: 4s fade out (no fade in)")
                 return fade_ins, fade_outs
             
-            elif choice == '8':
+            elif choice == '9':
                 # Gentle transitions preset
                 fade_ins = [3.0] * num_tracks
                 fade_outs = [5.0] * num_tracks
                 print("✓ Gentle transitions: 3s fade in, 5s fade out")
                 return fade_ins, fade_outs
             
-            elif choice == '9':
+            elif choice == '10':
                 print(HelpSystem.fade_effects_help())
             
             else:
@@ -2002,15 +2270,18 @@ class AudioCDWriter:
         Returns:
             List of gap durations in seconds for each track
         """
+        # Get default from config
+        config_gap = self.config.get('track_gap', self.DEFAULT_GAP_SECONDS)
+        
         print("\n" + "="*70)
         print("TRACK GAP CONFIGURATION")
         print("="*70)
         print("\nTrack gaps are the silent pauses between songs on an audio CD.")
-        print(f"Standard default: {self.DEFAULT_GAP_SECONDS} seconds between all tracks")
+        print(f"Configured default: {config_gap} seconds between all tracks")
         
         while True:
             print("\nOptions:")
-            print(f"1. Use standard gaps ({self.DEFAULT_GAP_SECONDS} seconds between all tracks)")
+            print(f"1. Use configured default ({config_gap} seconds between all tracks)")
             print("2. Set custom gap for all tracks")
             print("3. No gaps (gapless playback)")
             print("4. Set individual gaps for each track")
@@ -2022,9 +2293,9 @@ class AudioCDWriter:
             choice = input("\nSelect option (1-8): ").strip()
             
             if choice == '1':
-                # Standard 2-second gaps
-                gaps = [self.DEFAULT_GAP_SECONDS] * num_tracks
-                print(f"✓ Using standard {self.DEFAULT_GAP_SECONDS}-second gaps between all tracks")
+                # Use configured default
+                gaps = [config_gap] * num_tracks
+                print(f"✓ Using configured default {config_gap}-second gaps between all tracks")
                 return gaps
             
             elif choice == '2':
@@ -2860,13 +3131,18 @@ class AudioCDWriter:
         return [int(text) if text.isdigit() else text.lower()
                 for text in re.split(r'(\d+)', path)]
     
-    def ask_yes_no_with_help(self, question: str, help_text: str) -> bool:
-        """Ask a yes/no question with help option."""
+    def ask_yes_no_with_help(self, question: str, help_text: str, default: Optional[bool] = None) -> bool:
+        """Ask a yes/no question with help option and optional default."""
         while True:
             response = input(f"{question} (y/n/?): ").strip().lower()
             
             if response == '?':
                 print(f"\n{help_text}\n")
+            elif response == '':
+                if default is not None:
+                    return default
+                else:
+                    print("Please enter 'y' for yes, 'n' for no, or '?' for help")
             elif response == 'y':
                 return True
             elif response == 'n':
@@ -3661,8 +3937,8 @@ class AudioCDWriter:
 class MusicCDOrganizer:
     """Helper class to organize music files with metadata."""
     
-    def __init__(self):
-        self.writer = AudioCDWriter()
+    def __init__(self, config_manager: Optional[ConfigManager] = None):
+        self.writer = AudioCDWriter(config_manager)
     
     def read_metadata(self, audio_file: str) -> Dict:
         """Read metadata from audio file using ffprobe."""
@@ -5175,11 +5451,314 @@ With batch burning, you can efficiently create multiple CDs with
 minimal manual intervention, perfect for archiving collections or
 producing multiple copies!
 ═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def configuration_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+CONFIGURATION SETTINGS EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Since 1.1.4, Singe allows you to save your preferred settings in a configuration file,
+so you don't have to enter them every time you burn a CD. The config file
+stores defaults for burn speed, normalization, CD-TEXT, and more.
+
+WHAT IS THE CONFIGURATION FILE?
+
+The configuration file is a JSON file stored in your home directory:
+- Location: ~/.singe/config.json
+- Format: JSON (human-readable text)
+- Created automatically when you save settings
+- Loaded automatically when Singe starts
+
+AVAILABLE SETTINGS:
+
+BURN SETTINGS:
+• Burn speed (1-52x) - Default: 8x
+  How fast to write data to disc
+  
+• Normalize audio (on/off) - Default: ON
+  Adjust volume levels for consistency
+  
+• Use CD-TEXT (on/off) - Default: ON
+  Embed track/album metadata on disc
+  
+• Track gap (0-5 seconds) - Default: 2s
+  Silence between tracks
+  
+• Default fade in (0-10 seconds) - Default: 0s
+  Fade in at start of tracks
+  
+• Default fade out (0-10 seconds) - Default: 0s
+  Fade out at end of tracks
+  
+• Multi-session (on/off) - Default: OFF
+  Allow adding tracks to disc later
+  
+• Finalize disc (on/off) - Default: ON
+  Close disc after burning
+  
+• Verify after burn (on/off) - Default: OFF
+  Automatically verify burned CDs
+  
+• Eject after burn (on/off) - Default: OFF
+  Automatically eject disc when done
+
+FORMAT CONVERSION:
+• Output format - Default: mp3
+  Default format for exports (mp3/flac/ogg/aac/opus/wav)
+  
+• Output bitrate (64-320 kbps) - Default: 320
+  Quality for lossy formats
+  
+• Rip format - Default: flac
+  Default format when ripping CDs
+
+DEVICE:
+• Default device - Default: Auto-detect
+  CD/DVD drive device path
+
+HOW TO USE CONFIGURATION:
+
+1. ACCESS SETTINGS MENU
+   - Select option 12 from main menu
+   - Configuration editor opens
+
+2. VIEW CURRENT SETTINGS
+   - All settings displayed with current values
+   - Shows config file location and status
+   - Grouped by category
+
+3. EDIT SETTINGS
+   - Choose setting to modify
+   - Enter new value
+   - Changes apply immediately in memory
+
+4. SAVE CONFIGURATION
+   - Select "Save configuration" option
+   - Writes settings to config file
+   - Loaded automatically next time
+
+5. RESET TO DEFAULTS
+   - Select "Reset to defaults" option
+   - Restores factory settings
+   - Must save to make permanent
+
+EDITING INDIVIDUAL SETTINGS:
+
+1. Burn Speed
+   - Enter value 1-52
+   - Lower = better quality, slower
+   - Higher = faster, may reduce quality
+   - Recommended: 8x for best balance
+
+2. Normalize Audio
+   - Enter y (yes) or n (no)
+   - ON: Consistent volume across tracks
+   - OFF: Preserves original dynamics
+
+3. Use CD-TEXT
+   - Enter y (yes) or n (no)
+   - ON: Metadata embedded on disc
+   - OFF: Plain audio CD
+
+4. Track Gap
+   - Enter 0-5 seconds
+   - 0s = gapless playback
+   - 2s = standard
+   - 3-5s = classical/spoken word
+
+5. Fade In/Out
+   - Enter 0-10 seconds for each
+   - 0s = no fade (default)
+   - 2-3s = subtle fade
+   - 5+s = dramatic fade
+
+6. Multi-Session/Finalize
+   - Multi-session: Allow adding tracks later
+   - Finalize: Close disc permanently
+   - Both can be configured independently
+
+7. Verify/Eject
+   - Verify: Auto-check burned CDs
+   - Eject: Auto-eject when complete
+   - Convenience features
+
+8. Format Conversion
+   - Choose default formats
+   - Set default bitrates
+   - Applies to export and rip operations
+
+9. Default Device
+   - Specify CD/DVD drive
+   - Leave empty for auto-detection
+   - Useful with multiple drives
+
+CONFIGURATION BENEFITS:
+
+CONVENIENCE:
+✓ Set preferences once, use everywhere
+✓ No repetitive option entry
+✓ Consistent results every time
+✓ Faster workflow
+
+CUSTOMIZATION:
+✓ Tailor Singe to your needs
+✓ Different profiles for different tasks
+✓ Override defaults when needed
+✓ Fine-tune quality vs speed
+
+EFFICIENCY:
+✓ Batch burning uses config defaults
+✓ Quick setup for common tasks
+✓ Less typing, fewer mistakes
+✓ Professional workflow
+
+EXAMPLE CONFIGURATIONS:
+
+QUALITY ENTHUSIAST:
+- Burn speed: 4x (slow, high quality)
+- Normalize: ON
+- CD-TEXT: ON
+- Verify after burn: ON
+- Output format: flac
+- Rip format: flac
+
+SPEED BURNER:
+- Burn speed: 16x (fast)
+- Normalize: ON
+- CD-TEXT: ON
+- Verify after burn: OFF
+- Eject after burn: ON
+- Output format: mp3 @ 192kbps
+
+DJ/LIVE MIXER:
+- Track gap: 0s (gapless)
+- Normalize: ON
+- Burn speed: 8x
+- CD-TEXT: OFF
+- Fade in/out: 0s
+
+CLASSICAL MUSIC:
+- Track gap: 3s
+- Normalize: OFF (preserve dynamics)
+- Burn speed: 4x
+- CD-TEXT: ON
+- Fade: 0s
+
+AUDIOBOOK:
+- Track gap: 1s
+- Normalize: ON
+- Burn speed: 8x
+- CD-TEXT: ON (track titles as chapters)
+
+CONFIGURATION FILE FORMAT:
+
+The config file is JSON:
+{
+  "burn_speed": 8,
+  "normalize_audio": true,
+  "use_cdtext": true,
+  "track_gap": 2,
+  "default_fade_in": 0.0,
+  "default_fade_out": 0.0,
+  "multi_session": false,
+  "finalize_disc": true,
+  "output_format": "mp3",
+  "output_bitrate": 320,
+  "rip_format": "flac",
+  "verify_after_burn": false,
+  "eject_after_burn": false,
+  "default_device": null
+}
+
+You can edit this file directly with a text editor if preferred.
+
+USING DEFAULTS IN OPERATIONS:
+
+When burning a CD:
+- Config defaults are suggested
+- You can override them interactively
+- Batch jobs can use defaults quickly
+- Individual customization still available
+
+Quick Setup Mode:
+Many operations offer "use default settings" option:
+- Loads all values from config
+- Skips interactive prompts
+- Fast for repeated tasks
+- Ideal for batch operations
+
+MANAGING MULTIPLE CONFIGS:
+
+While Singe uses one config file, you can:
+- Save copies with different names
+- Swap them as needed
+- Keep presets for different tasks
+- Edit in text editor
+
+Example workflow:
+1. cp ~/.singe/config.json ~/.singe/config-quality.json
+2. Edit settings for speed
+3. cp ~/.singe/config-speed.json ~/.singe/config.json
+4. Singe now uses speed preset
+
+TROUBLESHOOTING:
+
+Config not loading?
+- Check file exists: ~/.singe/config.json
+- Verify JSON syntax (use validator)
+- Check file permissions
+
+Settings not saving?
+- Verify write permissions
+- Check disk space
+- Look for error messages
+
+Want to start fresh?
+- Delete ~/.singe/config.json
+- Restart Singe
+- Settings reset to defaults
+
+BEST PRACTICES:
+
+1. SET SENSIBLE DEFAULTS
+   - Use settings you apply 80% of the time
+   - Override when needed
+   - Test before committing
+
+2. SAVE AFTER CHANGES
+   - Don't forget to save!
+   - Changes in memory until saved
+   - Verify file updated
+
+3. BACKUP YOUR CONFIG
+   - Copy config file periodically
+   - Keep presets for different tasks
+   - Easy to restore if needed
+
+4. TEST DEFAULTS
+   - Burn test CD with new settings
+   - Verify quality/results
+   - Adjust as needed
+
+5. DOCUMENT CUSTOM SETTINGS
+   - Note why you chose specific values
+   - Remember what works best
+   - Share with others if helpful
+
+With configuration settings, Singe adapts to your workflow, making
+CD burning faster and more consistent!
+═══════════════════════════════════════════════════════════════════════"""
 
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
-    writer = AudioCDWriter()
-    organizer = MusicCDOrganizer()
+    # Initialize configuration manager first
+    config_manager = ConfigManager()
+    
+    # Initialize writer with config
+    writer = AudioCDWriter(config_manager)
+    organizer = MusicCDOrganizer(config_manager)
     help_sys = HelpSystem()
     
     # Check for required tools
@@ -5199,7 +5778,7 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\nSinge 1.1.3")
+        print("\nSinge 1.1.4")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
@@ -5211,10 +5790,16 @@ def main():
         print("9. Export to multiple formats")
         print("10. Album art manager")
         print("11. Batch burn queue")
-        print("12. Help topics")
-        print("13. Exit")
+        print("12. Configuration settings")
+        print("13. Help topics")
+        print("14. Exit")
 
-        choice = input("\nSelect option (1-13): ").strip()
+        choice = input("\nSelect option (1-14): ").strip()
+        
+        if choice == '12':
+            # Configuration settings
+            config_manager.interactive_edit()
+            continue
         
         if choice in ['1', '2', '3']:
             # Common workflow for all audio CD burning options
@@ -5336,28 +5921,37 @@ def main():
             if response != 'y':
                 continue
             
-            # Step 7: Ask about CD-TEXT
+            # Step 7: Ask about CD-TEXT (show default from config)
+            default_cdtext = config_manager.get('use_cdtext', True)
             use_cdtext = writer.ask_yes_no_with_help(
-                "Enable CD-TEXT (embed track names/artist info)?",
-                help_sys.cdtext_help()
+                f"Enable CD-TEXT (embed track names/artist info)? [default: {'y' if default_cdtext else 'n'}]",
+                help_sys.cdtext_help(),
+                default=default_cdtext
             )
             
-            # Step 8: Ask about normalization
+            # Step 8: Ask about normalization (show default from config)
+            default_normalize = config_manager.get('normalize_audio', True)
             normalize = writer.ask_yes_no_with_help(
-                "Normalize audio levels?",
-                help_sys.normalize_audio_help()
+                f"Normalize audio levels? [default: {'y' if default_normalize else 'n'}]",
+                help_sys.normalize_audio_help(),
+                default=default_normalize
             )
             
-            # Step 9: Ask about burn speed
+            # Step 9: Ask about burn speed (show default from config)
+            default_speed = config_manager.get('burn_speed', 8)
             while True:
-                speed_response = input("Burn speed (4/8/16/?): ").strip()
+                speed_response = input(f"Burn speed (4/8/16/?) [default: {default_speed}x]: ").strip()
                 if speed_response == '?':
                     print(help_sys.burn_speed_help())
+                elif speed_response == '':
+                    burn_speed = default_speed
+                    break
                 elif speed_response in ['4', '8', '16']:
                     burn_speed = int(speed_response)
                     break
                 else:
-                    burn_speed = 8  # Default
+                    print(f"Invalid input. Using default: {default_speed}x")
+                    burn_speed = default_speed
                     break
             
             # Step 10: Burn!
@@ -5822,7 +6416,7 @@ def main():
                 else:
                     print("Invalid option")
         
-        elif choice == '12':
+        elif choice == '13':
             print("\n=== HELP TOPICS ===")
             print("1. Multi-Session Support (NEW!)")
             print("2. CD Verification")
@@ -5839,9 +6433,10 @@ def main():
             print("13. Format Export")
             print("14. Album Art")
             print("15. Batch Burn Queue (NEW!)")
-            print("16. Back to main menu")
+            print("16. Configuration Settings (NEW!)")
+            print("17. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-16): ").strip()
+            help_choice = input("\nSelect help topic (1-17): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -5874,9 +6469,11 @@ def main():
             if help_choice == '15':
                 print(help_sys.batch_burn_help())
             if help_choice == '16':
+                print(help_sys.configuration_help())
+            if help_choice == '17':
                 continue
         
-        elif choice == '13':
+        elif choice == '14':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
