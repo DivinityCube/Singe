@@ -1899,6 +1899,7 @@ class AudioCDWriter:
             # Check disc status
             print("\nChecking disc status...")
             disc_info = self.check_disc_status()
+            self.display_disc_status(disc_info)
             
             if not disc_info['inserted']:
                 print("\n✗ No disc detected!")
@@ -1912,12 +1913,22 @@ class AudioCDWriter:
                     break
             
             if not disc_info['blank']:
-                print("\n⚠ WARNING: Disc is not blank!")
+                if disc_info['finalized']:
+                    print("\n✗ WARNING: Disc is finalized and contains data!")
+                    print("  Burning will likely fail.")
+                elif disc_info['appendable']:
+                    print("\n⚠ WARNING: Disc already has data (multi-session capable)!")
+                    print("  Burning may add tracks or fail.")
+                else:
+                    print("\n⚠ WARNING: Disc is not blank!")
+                
                 choice = input("Continue anyway? (y/n): ").strip().lower()
                 if choice != 'y':
                     job.status = 'skipped'
                     job.error_message = "Disc not blank"
                     continue
+            else:
+                print("\n✓ Blank disc confirmed - proceeding with burn")
             
             # Execute burn
             print(f"\nBurning '{job.name}'...")
@@ -5749,6 +5760,346 @@ BEST PRACTICES:
 With configuration settings, Singe adapts to your workflow, making
 CD burning faster and more consistent!
 ═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def disc_detection_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+DISC DETECTION EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Since 1.1.4, Singe will automatically detect the status of
+the CD in your drive before burning. This prevents common errors and
+data loss by verifying the disc is suitable for burning.
+
+WHAT IS DISC DETECTION?
+
+Before burning begins, Singe automatically:
+- Checks if a disc is inserted
+- Determines if the disc is blank
+- Detects existing data on the disc
+- Identifies if the disc is finalized or appendable
+- Shows available capacity
+- Warns about potential issues
+
+DISC STATES:
+
+1. BLANK DISC ✓
+   Status: Ready to burn
+   Description: Empty disc with no data
+   Action: Proceeds with burn automatically
+   Capacity: Full disc available (74 or 80 minutes)
+   
+2. NO DISC ✗
+   Status: Cannot proceed
+   Description: No disc inserted in drive
+   Action: Prompts to insert disc or cancel
+   Resolution: Insert a disc and try again
+
+3. APPENDABLE DISC ⚠
+   Status: Has data but can accept more
+   Description: Multi-session disc with existing tracks
+   Action: Warns and asks for confirmation
+   Options:
+   - Continue to add tracks (multi-session)
+   - Cancel and use blank disc
+   - Use multi-session mode (option 4)
+   
+4. FINALIZED DISC ✗
+   Status: Cannot add data
+   Description: Disc is closed/finalized with data
+   Action: Warns that burn will likely fail
+   Options:
+   - Cancel (recommended)
+   - Use CD-RW and erase it first
+   - Try anyway (not recommended)
+
+WHEN DISC DETECTION RUNS:
+
+• Regular Burn (Options 1-3):
+  - After you press Enter to start burning
+  - Before any audio conversion begins
+  - Gives time to swap discs if needed
+
+• Multi-Session Mode (Option 4):
+  - Immediately upon selecting the option
+  - Verifies disc is appendable
+  - Ensures disc can accept more tracks
+
+• Batch Burn Queue (Option 11):
+  - For each job in the queue
+  - After prompting to insert disc
+  - Before burning that specific CD
+
+DISC DETECTION OUTPUT:
+
+The status display shows:
+
+┌────────────────────────────────────────────┐
+│ DISC STATUS                                 │
+├────────────────────────────────────────────┤
+│ ✓ Blank disc detected                      │
+│   Available capacity: 80:00                │
+└────────────────────────────────────────────┘
+
+For appendable discs:
+┌────────────────────────────────────────────┐
+│ DISC STATUS                                 │
+├────────────────────────────────────────────┤
+│ ✓ Appendable disc detected                 │
+│   Existing tracks: 8                       │
+│   Status: Open for additional sessions     │
+│                                             │
+│   You can add more tracks to this disc!    │
+└────────────────────────────────────────────┘
+
+For finalized discs:
+┌────────────────────────────────────────────┐
+│ DISC STATUS                                 │
+├────────────────────────────────────────────┤
+│ ⚠ Finalized disc detected                  │
+│   Existing tracks: 12                      │
+│   Status: Closed/Finalized                 │
+│                                             │
+│   This disc cannot accept additional       │
+│   tracks. Use CD-RW and erase, or use      │
+│   different disc.                          │
+└────────────────────────────────────────────┘
+
+BENEFITS OF DISC DETECTION:
+
+PREVENTS ERRORS:
+✓ Avoids burning to finalized discs
+✓ Catches "no disc" situations early
+✓ Warns about non-blank media
+✓ Saves time by detecting issues before conversion
+
+PROTECTS DATA:
+✓ Warns before overwriting existing CDs
+✓ Prevents accidental data loss
+✓ Identifies multi-session discs
+✓ Shows existing track count
+
+SAVES TIME:
+✓ No wasted conversions on bad discs
+✓ Early detection of problems
+✓ Clear status before proceeding
+✓ Quick disc swap if needed
+
+IMPROVES WORKFLOW:
+✓ Professional burn process
+✓ Clear feedback at each step
+✓ Informed decisions
+✓ Reduced failed burns
+
+HANDLING WARNINGS:
+
+1. DISC NOT BLANK:
+   
+   Warning appears:
+   "⚠ WARNING: Disc is not blank!"
+   
+   Your options:
+   a) Cancel and insert blank disc (recommended)
+   b) Continue if intentional (multi-session)
+   c) Erase CD-RW first if reusable media
+   
+   When to continue:
+   - You specifically want multi-session
+   - Disc is known to be appendable
+   - Testing/development purposes
+
+2. FINALIZED DISC:
+   
+   Warning appears:
+   "✗ WARNING: Disc is finalized and contains data!
+    Attempting to burn will likely fail."
+   
+   Recommended actions:
+   - Cancel and use blank disc
+   - If CD-RW: erase first, then burn
+   - Check disc type (CD-R vs CD-RW)
+   
+   Do NOT continue unless:
+   - Disc is actually blank (false detection)
+   - Testing disc detection itself
+
+3. NO DISC DETECTED:
+   
+   Warning appears:
+   "✗ Cannot proceed: No disc detected"
+   
+   Solutions:
+   - Insert a disc
+   - Check drive door is closed
+   - Verify drive is connected
+   - Try different disc if hardware issue
+
+TECHNICAL DETAILS:
+
+Detection Method:
+- Uses cdrdao disk-info command
+- Reads disc table of contents (TOC)
+- Checks for existing sessions
+- Queries drive status
+
+Information Retrieved:
+- Disc presence (inserted/not inserted)
+- Blank status
+- Finalization state
+- Track count (if data present)
+- Session information
+- Capacity (estimated)
+
+Compatibility:
+- Works with CD-R and CD-RW
+- Supports all CD standards
+- Compatible with most drives
+- Requires cdrdao tool
+
+Limitations:
+- Cannot detect disc quality
+- May misidentify rare formats
+- Doesn't verify disc brand
+- Some drives report limited info
+
+TROUBLESHOOTING:
+
+Problem: Detection always shows "No disc"
+Solutions:
+- Verify disc is inserted
+- Check drive is powered on
+- Ensure cdrdao is installed
+- Test with different disc
+- Check device path in config
+
+Problem: Blank disc detected as non-blank
+Solutions:
+- Disc may have hidden session
+- Try different blank disc
+- Use CD-RW and erase first
+- Check disc isn't damaged
+
+Problem: Detection takes too long
+Solutions:
+- Normal behavior (5-10 seconds)
+- Some drives are slower
+- Close/open drive door
+- Check disc is clean
+
+Problem: Wrong capacity shown
+Solutions:
+- Detection estimates capacity
+- 74min vs 80min depends on disc
+- Actual capacity checked before burn
+- Use disc status option (5) for details
+
+BEST PRACTICES:
+
+1. TRUST THE DETECTION
+   - Warnings are there for a reason
+   - Don't continue on finalized discs
+   - Heed "not blank" warnings
+   - Insert correct disc type
+
+2. PREPARE DISCS
+   - Have blank discs ready
+   - Remove from cases beforehand
+   - Check discs are clean
+   - Use quality media
+
+3. USE DISC STATUS OPTION
+   - Option 5 in main menu
+   - Check any disc anytime
+   - Verify disc before queuing
+   - Test questionable discs
+
+4. FOR BATCH BURNING
+   - Pre-check all discs
+   - Keep blanks organized
+   - Number discs if doing series
+   - Have extras ready
+
+5. UNDERSTAND YOUR DISCS
+   - Know CD-R vs CD-RW
+   - Check capacity (74 vs 80 min)
+   - Use appropriate disc type
+   - Don't mix disc types in batch
+
+MULTI-SESSION AWARENESS:
+
+If disc shows as appendable:
+- You can add tracks to it
+- Previous tracks remain
+- Use option 4 for best results
+- Or cancel and use blank disc
+
+If you want multi-session:
+- Start with blank disc
+- Don't finalize first burn
+- Keep disc for future sessions
+- Track cumulative capacity
+
+If you DON'T want multi-session:
+- Always use blank discs
+- Finalize after burning
+- Use new disc for each project
+- Heed "not blank" warnings
+
+COMPARISON WITH MANUAL CHECKING:
+
+Without Disc Detection:
+❌ Burn fails mysteriously
+❌ Time wasted on conversion
+❌ Accidental overwrites
+❌ Unclear disc status
+❌ Trial and error approach
+
+With Disc Detection:
+✓ Clear status before burning
+✓ Problems caught early
+✓ Informed decisions
+✓ Professional workflow
+✓ Fewer failed burns
+
+REAL-WORLD SCENARIOS:
+
+Scenario 1: Wrong Disc Inserted
+You grab a disc thinking it's blank, but it has data.
+Result: Singe detects data and warns you
+Outcome: You swap for correct disc, no data lost
+
+Scenario 2: Drive Door Open
+You forget to close the drive door after checking disc.
+Result: Singe detects no disc
+Outcome: You close door and retry, no wasted time
+
+Scenario 3: Finalized Disc
+You want to add tracks but disc is finalized.
+Result: Singe warns disc is closed
+Outcome: You use multi-session disc instead
+
+Scenario 4: Batch Burn Mix-up
+During batch burn, you insert wrong disc.
+Result: Each disc is checked individually
+Outcome: You can skip that job and continue
+
+DISC DETECTION IN ACTION:
+
+Typical Workflow:
+1. Select burn option
+2. Configure settings
+3. Singe prompts to insert disc
+4. You insert disc and press Enter
+5. Singe checks disc (5-10 seconds)
+6. Status displayed clearly
+7. Decision point based on status
+8. Burn proceeds if suitable
+
+With automatic detection, burning CDs is safer, more
+reliable, and more professional. Trust the system and
+follow the warnings!
+═══════════════════════════════════════════════════════════════════════"""
 
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
@@ -5959,6 +6310,36 @@ def main():
             print("="*70)
             print("\nPlease insert a blank CD-R disc into the drive.")
             input("Press Enter when ready to start burning...")
+            
+            # Check disc status
+            print("\nChecking disc status...")
+            disc_info = writer.check_disc_status()
+            writer.display_disc_status(disc_info)
+            
+            # Validate disc is suitable for burning
+            if not disc_info['inserted']:
+                print("\n✗ Cannot proceed: No disc detected")
+                print("  Please insert a disc and try again.")
+                continue
+            
+            if not disc_info['blank'] and disc_info['finalized']:
+                print("\n⚠ WARNING: This disc is finalized and contains data!")
+                print("  Attempting to burn will likely fail.")
+                choice = input("\nDo you want to continue anyway? (y/n): ").strip().lower()
+                if choice != 'y':
+                    print("Burn cancelled. Please use a blank disc.")
+                    continue
+            
+            if not disc_info['blank'] and disc_info['appendable']:
+                print("\n⚠ This disc already has data (multi-session mode available)")
+                print("  You can add tracks to this disc or use a blank one.")
+                choice = input("\nContinue with this disc? (y/n): ").strip().lower()
+                if choice != 'y':
+                    print("Burn cancelled. Please use a blank disc.")
+                    continue
+            
+            if disc_info['blank']:
+                print("\n✓ Blank disc confirmed - ready to burn!")
             
             if writer.burn_audio_cd(organized_files, normalize, burn_speed, 
                                    use_cdtext=use_cdtext, track_gaps=track_gaps,
@@ -6440,7 +6821,7 @@ def main():
         
         elif choice == '13':
             print("\n=== HELP TOPICS ===")
-            print("1. Multi-Session Support (NEW!)")
+            print("1. Multi-Session Support")
             print("2. CD Verification")
             print("3. Fade In/Out Effects")
             print("4. Track Gaps/Pauses")
@@ -6454,11 +6835,12 @@ def main():
             print("12. CD Media Types")
             print("13. Format Export")
             print("14. Album Art")
-            print("15. Batch Burn Queue (NEW!)")
+            print("15. Batch Burn Queue")
             print("16. Configuration Settings (NEW!)")
-            print("17. Back to main menu")
+            print("17. Disc Detection (NEW!)")
+            print("18. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-17): ").strip()
+            help_choice = input("\nSelect help topic (1-18): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -6493,6 +6875,8 @@ def main():
             if help_choice == '16':
                 print(help_sys.configuration_help())
             if help_choice == '17':
+                print(help_sys.disc_detection_help())
+            if help_choice == '18':
                 continue
         
         elif choice == '14':
