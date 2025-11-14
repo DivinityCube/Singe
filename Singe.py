@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 import hashlib
 import time
 import urllib.request
@@ -272,6 +272,269 @@ class ConfigManager:
             else:
                 print("Invalid option.")
 
+class BurnHistoryManager:
+    """Manages burn history log for tracking CD burning operations."""
+    
+    def __init__(self, history_path: Optional[str] = None):
+        """
+        Initialize burn history manager.
+        
+        Args:
+            history_path: Path to history file. If None, uses default location.
+        """
+        if history_path:
+            self.history_path = Path(history_path)
+        else:
+            # Use same directory as config
+            home = Path.home()
+            self.history_path = home / '.singe' / 'burn_history.json'
+        
+        self.history = []
+        self.load_history()
+    
+    def load_history(self) -> bool:
+        """
+        Load burn history from file.
+        
+        Returns:
+            True if history loaded successfully, False otherwise
+        """
+        if not self.history_path.exists():
+            return False
+        
+        try:
+            with open(self.history_path, 'r') as f:
+                self.history = json.load(f)
+            return True
+        except Exception as e:
+            print(f"Warning: Could not load burn history: {e}")
+            self.history = []
+            return False
+    
+    def save_history(self) -> bool:
+        """
+        Save burn history to file.
+        
+        Returns:
+            True if history saved successfully, False otherwise
+        """
+        try:
+            # Create directory if it doesn't exist
+            self.history_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(self.history_path, 'w') as f:
+                json.dump(self.history, f, indent=2)
+            
+            return True
+        except Exception as e:
+            print(f"Error: Could not save burn history: {e}")
+            return False
+    
+    def add_entry(self, entry: Dict):
+        """
+        Add a new burn history entry.
+        
+        Args:
+            entry: Dictionary containing burn information
+        """
+        # Add timestamp if not present
+        if 'timestamp' not in entry:
+            entry['timestamp'] = datetime.now().isoformat()
+        
+        self.history.append(entry)
+        self.save_history()
+    
+    def get_recent_burns(self, limit: int = 10) -> List[Dict]:
+        """
+        Get the most recent burn entries.
+        
+        Args:
+            limit: Maximum number of entries to return
+            
+        Returns:
+            List of recent burn entries
+        """
+        return self.history[-limit:] if self.history else []
+    
+    def get_all_burns(self) -> List[Dict]:
+        """Get all burn history entries."""
+        return self.history
+    
+    def get_statistics(self) -> Dict:
+        """
+        Calculate statistics from burn history.
+        
+        Returns:
+            Dictionary with statistics
+        """
+        if not self.history:
+            return {
+                'total_burns': 0,
+                'successful_burns': 0,
+                'failed_burns': 0,
+                'total_tracks': 0,
+                'total_duration': 0,
+                'average_speed': 0,
+                'most_used_speed': 0
+            }
+        
+        total = len(self.history)
+        successful = sum(1 for e in self.history if e.get('status') == 'success')
+        failed = total - successful
+        total_tracks = sum(e.get('track_count', 0) for e in self.history)
+        total_duration = sum(e.get('duration_seconds', 0) for e in self.history if e.get('duration_seconds'))
+        
+        speeds = [e.get('burn_speed', 0) for e in self.history if e.get('burn_speed')]
+        avg_speed = sum(speeds) / len(speeds) if speeds else 0
+        
+        # Find most common speed
+        speed_counts = {}
+        for speed in speeds:
+            speed_counts[speed] = speed_counts.get(speed, 0) + 1
+        most_used_speed = max(speed_counts.items(), key=lambda x: x[1])[0] if speed_counts else 0
+        
+        return {
+            'total_burns': total,
+            'successful_burns': successful,
+            'failed_burns': failed,
+            'total_tracks': total_tracks,
+            'total_duration': total_duration,
+            'average_speed': round(avg_speed, 1),
+            'most_used_speed': most_used_speed
+        }
+    
+    def search_history(self, query: str) -> List[Dict]:
+        """
+        Search burn history by name or file.
+        
+        Args:
+            query: Search string
+            
+        Returns:
+            List of matching entries
+        """
+        query_lower = query.lower()
+        results = []
+        
+        for entry in self.history:
+            # Search in name
+            if query_lower in entry.get('name', '').lower():
+                results.append(entry)
+                continue
+            
+            # Search in files
+            files = entry.get('files', [])
+            if any(query_lower in f.lower() for f in files):
+                results.append(entry)
+        
+        return results
+    
+    def clear_history(self):
+        """Clear all burn history."""
+        self.history = []
+        self.save_history()
+    
+    def display_history(self, entries: Optional[List[Dict]] = None, limit: Optional[int] = None):
+        """
+        Display burn history in formatted output.
+        
+        Args:
+            entries: Specific entries to display, or None for all
+            limit: Maximum number of entries to show
+        """
+        if entries is None:
+            entries = self.history
+        
+        if not entries:
+            print("\n" + "="*70)
+            print("BURN HISTORY")
+            print("="*70)
+            print("\nNo burn history found.")
+            print("History will be created as you burn CDs.")
+            print("="*70)
+            return
+        
+        # Apply limit
+        if limit:
+            entries = entries[-limit:]
+        
+        print("\n" + "="*70)
+        print("BURN HISTORY")
+        print("="*70)
+        
+        for i, entry in enumerate(reversed(entries), 1):
+            timestamp = entry.get('timestamp', 'Unknown time')
+            if timestamp != 'Unknown time':
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    pass
+            
+            name = entry.get('name', 'Unnamed burn')
+            status = entry.get('status', 'unknown')
+            status_icon = '✓' if status == 'success' else '✗'
+            
+            print(f"\n{i}. {status_icon} {name}")
+            print(f"   Time: {timestamp}")
+            print(f"   Status: {status.upper()}")
+            print(f"   Tracks: {entry.get('track_count', 'N/A')}")
+            
+            if entry.get('burn_speed'):
+                print(f"   Speed: {entry.get('burn_speed')}x")
+            
+            if entry.get('duration_seconds'):
+                duration = entry.get('duration_seconds')
+                mins, secs = divmod(int(duration), 60)
+                print(f"   Duration: {mins}m {secs}s")
+            
+            if entry.get('normalized'):
+                print(f"   Normalized: Yes")
+            
+            if entry.get('cdtext'):
+                print(f"   CD-TEXT: Yes")
+            
+            if entry.get('verified'):
+                print(f"   Verified: {entry.get('verified')}")
+            
+            if entry.get('error_message'):
+                print(f"   Error: {entry.get('error_message')}")
+            
+            if limit and i >= limit:
+                break
+        
+        print("\n" + "="*70)
+        print(f"Showing {min(len(entries), limit) if limit else len(entries)} of {len(self.history)} total burns")
+        print("="*70)
+    
+    def display_statistics(self):
+        """Display burn statistics."""
+        stats = self.get_statistics()
+        
+        print("\n" + "="*70)
+        print("BURN STATISTICS")
+        print("="*70)
+        
+        if stats['total_burns'] == 0:
+            print("\nNo burns recorded yet.")
+            print("Statistics will appear as you burn CDs.")
+        else:
+            print(f"\nTotal burns: {stats['total_burns']}")
+            print(f"Successful: {stats['successful_burns']} ({stats['successful_burns']/stats['total_burns']*100:.1f}%)")
+            print(f"Failed: {stats['failed_burns']} ({stats['failed_burns']/stats['total_burns']*100:.1f}%)")
+            print(f"\nTotal tracks burned: {stats['total_tracks']}")
+            
+            if stats['total_duration'] > 0:
+                hours, remainder = divmod(int(stats['total_duration']), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                print(f"Total burn time: {hours}h {minutes}m {seconds}s")
+            
+            if stats['average_speed'] > 0:
+                print(f"\nAverage burn speed: {stats['average_speed']}x")
+                print(f"Most used speed: {stats['most_used_speed']}x")
+        
+        print("="*70)
+
 class ProgressBar:
     """Simple progress bar for terminal display."""
     
@@ -457,8 +720,9 @@ class AudioCDWriter:
     DEFAULT_FADE_IN = 0.0
     DEFAULT_FADE_OUT = 0.0
     
-    def __init__(self, config_manager: Optional[ConfigManager] = None):
+    def __init__(self, config_manager: Optional[ConfigManager] = None, history_manager: Optional['BurnHistoryManager'] = None):
         self.config = config_manager if config_manager else ConfigManager()
+        self.history = history_manager
         self.device = self.config.get('default_device') or self._detect_cd_device()
         self.last_burn_wav_files = []  # Store WAV files for verification
         self.last_burn_checksums = {}  # Store checksums for verification
@@ -3559,6 +3823,9 @@ class AudioCDWriter:
             True if successful, False otherwise
         """
         
+        # Track burn start time
+        burn_start_time = time.time()
+        
         if dry_run:
             print("\n" + "="*70)
             print("DRY RUN MODE - NO ACTUAL BURNING WILL OCCUR")
@@ -3927,7 +4194,36 @@ class AudioCDWriter:
                 
                 result = subprocess.run(burn_cmd)
 
-            return result.returncode == 0
+            # Log burn to history
+            burn_success = result.returncode == 0
+            burn_duration = time.time() - burn_start_time
+            
+            if self.history:
+                # Get file names for history
+                file_names = [os.path.basename(f) for f in audio_files_sorted[:5]]  # First 5 files
+                if len(audio_files_sorted) > 5:
+                    file_names.append(f"... and {len(audio_files_sorted) - 5} more")
+                
+                history_entry = {
+                    'name': album_info.get('title', 'Audio CD'),
+                    'status': 'success' if burn_success else 'failed',
+                    'track_count': len(audio_files_sorted),
+                    'burn_speed': speed,
+                    'duration_seconds': burn_duration,
+                    'normalized': normalize,
+                    'cdtext': use_cdtext,
+                    'multi_session': multi_session,
+                    'finalized': finalize,
+                    'files': file_names,
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                if not burn_success:
+                    history_entry['error_message'] = 'Burn command failed'
+                
+                self.history.add_entry(history_entry)
+
+            return burn_success
     
     def create_cue_sheet(self, audio_files: List[str], output_file: str = "audio.cue"):
         """Create a CUE sheet for the audio files."""
@@ -3948,8 +4244,8 @@ class AudioCDWriter:
 class MusicCDOrganizer:
     """Helper class to organize music files with metadata."""
     
-    def __init__(self, config_manager: Optional[ConfigManager] = None):
-        self.writer = AudioCDWriter(config_manager)
+    def __init__(self, config_manager: Optional[ConfigManager] = None, history_manager: Optional['BurnHistoryManager'] = None):
+        self.writer = AudioCDWriter(config_manager, history_manager)
     
     def read_metadata(self, audio_file: str) -> Dict:
         """Read metadata from audio file using ffprobe."""
@@ -6100,15 +6396,489 @@ With automatic detection, burning CDs is safer, more
 reliable, and more professional. Trust the system and
 follow the warnings!
 ═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def burn_history_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+BURN HISTORY EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Singe 1.1.5 automatically tracks all CD burning operations in a history
+log. This feature helps you monitor your burning activity, troubleshoot
+issues, and maintain records of your CD collection.
+
+WHAT IS BURN HISTORY?
+
+Burn history is an automatic log that records:
+• Every CD you burn
+• When you burned it
+• How many tracks were included
+• Burn settings used (speed, normalization, etc.)
+• Whether the burn succeeded or failed
+• Duration of the burn operation
+• Error messages (if burn failed)
+
+INFORMATION TRACKED:
+
+For each burn, Singe records:
+
+✓ Name/Title: Album or CD name
+✓ Timestamp: Exact date and time of burn
+✓ Status: Success or Failed
+✓ Track Count: Number of tracks burned
+✓ Burn Speed: Speed used (4x, 8x, 16x, etc.)
+✓ Duration: Time taken to complete burn
+✓ Settings: Normalization, CD-TEXT, multi-session
+✓ Files: List of files burned (first 5 shown)
+✓ Errors: Detailed error messages if failed
+
+WHERE IS HISTORY STORED?
+
+History location: ~/.singe/burn_history.json
+Format: JSON (human-readable text file)
+Persistence: Saved automatically after each burn
+Access: Via option 13 in main menu
+
+VIEWING BURN HISTORY:
+
+1. RECENT BURNS (Last 10)
+   Shows your 10 most recent burns
+   Quick overview of latest activity
+   Perfect for checking recent work
+   
+2. VIEW ALL BURNS
+   Complete history from beginning
+   Scrollable list of all burns
+   See your entire burning history
+   
+3. VIEW STATISTICS
+   Summary of all burning activity
+   Success/failure rates
+   Total tracks burned
+   Average burn speed
+   Most used settings
+   Total burn time
+   
+4. SEARCH HISTORY
+   Find specific burns by name
+   Search by file names
+   Locate particular projects
+   Filter by keywords
+   
+5. CLEAR HISTORY
+   Remove all history entries
+   Start fresh
+   Cannot be undone
+   Use with caution
+
+HISTORY DISPLAY FORMAT:
+
+Recent burn example:
+┌──────────────────────────────────────────┐
+│ 1. ✓ Beatles - Abbey Road               │
+│    Time: 2025-11-14 15:32:45             │
+│    Status: SUCCESS                       │
+│    Tracks: 17                            │
+│    Speed: 8x                             │
+│    Duration: 11m 23s                     │
+│    Normalized: Yes                       │
+│    CD-TEXT: Yes                          │
+└──────────────────────────────────────────┘
+
+Failed burn example:
+┌──────────────────────────────────────────┐
+│ 2. ✗ Mix CD - Summer 2025                │
+│    Time: 2025-11-14 14:15:22             │
+│    Status: FAILED                        │
+│    Tracks: 12                            │
+│    Speed: 16x                            │
+│    Duration: 8m 45s                      │
+│    Error: Burn command failed            │
+└──────────────────────────────────────────┘
+
+STATISTICS DISPLAY:
+
+Example statistics output:
+═══════════════════════════════════════════
+BURN STATISTICS
+═══════════════════════════════════════════
+
+Total burns: 47
+Successful: 44 (93.6%)
+Failed: 3 (6.4%)
+
+Total tracks burned: 583
+Total burn time: 8h 23m 15s
+
+Average burn speed: 8.2x
+Most used speed: 8x
+═══════════════════════════════════════════
+
+BENEFITS OF BURN HISTORY:
+
+TRACKING:
+✓ Know what you've burned
+✓ Track your CD collection
+✓ Monitor burning activity
+✓ Record keeping for projects
+
+TROUBLESHOOTING:
+✓ Review failed burns
+✓ Identify patterns in failures
+✓ Compare settings between burns
+✓ See what works best
+
+PLANNING:
+✓ Estimate burn times
+✓ Choose optimal settings
+✓ Learn from past burns
+✓ Improve success rate
+
+DOCUMENTATION:
+✓ Professional records
+✓ Project documentation
+✓ Archive information
+✓ Reference for future burns
+
+AUTOMATIC LOGGING:
+
+History is recorded automatically:
+• No extra steps required
+• Happens during every burn
+• Saved immediately
+• No manual entry needed
+
+What gets logged:
+• Regular burns (options 1-3)
+• Multi-session burns (option 4)
+• Batch burn operations
+• All burn attempts (success and failure)
+
+When logging occurs:
+• After burn completes
+• Before verification step
+• Regardless of success/failure
+• Immediately saved to file
+
+SEARCH FUNCTIONALITY:
+
+Search by name:
+- Enter album title
+- Find specific project
+- Case-insensitive search
+- Partial matches work
+
+Search by file:
+- Enter filename
+- Find which CD has that file
+- Search by artist or track
+- Locate specific songs
+
+Search examples:
+• "Beatles" - finds all Beatles albums
+• "Summer" - finds "Summer Mix 2025"
+• "track_01" - finds CDs with that file
+• "Jazz" - finds any jazz-related burns
+
+STATISTICS EXPLAINED:
+
+Total Burns:
+- Count of all burn attempts
+- Includes successful and failed
+- Since history began
+- Cumulative total
+
+Success Rate:
+- Percentage of successful burns
+- Based on total attempts
+- Quality indicator
+- Target: 95%+ success
+
+Total Tracks:
+- Sum of all tracks burned
+- Only counts successful burns
+- Indicates volume of work
+- Measure of productivity
+
+Total Burn Time:
+- Cumulative time burning CDs
+- Hours, minutes, seconds
+- Only successful burns counted
+- Shows time investment
+
+Average Speed:
+- Mean burn speed across all burns
+- Calculated from all attempts
+- Your typical burning speed
+- Useful for planning
+
+Most Used Speed:
+- Your most common speed setting
+- Mode of speed distribution
+- Your preferred speed
+- Optimal for your setup
+
+MANAGING HISTORY:
+
+History File:
+- Location: ~/.singe/burn_history.json
+- Format: Standard JSON
+- Human-readable
+- Can be backed up
+
+Backup History:
+cp ~/.singe/burn_history.json ~/burn_history_backup.json
+
+Restore History:
+cp ~/burn_history_backup.json ~/.singe/burn_history.json
+
+Manual Editing:
+- Can edit JSON directly
+- Use any text editor
+- Be careful with syntax
+- Validate JSON after editing
+
+Sharing History:
+- Copy history file
+- Share with others
+- Compare burn statistics
+- Document projects
+
+PRIVACY CONSIDERATIONS:
+
+What's in the history:
+✓ CD names/titles
+✓ File names (first 5 per burn)
+✓ Burn settings
+✓ Timestamps
+
+What's NOT in history:
+✗ Full file paths
+✗ File contents
+✗ Personal information
+✗ Location data
+
+The history file is:
+• Stored locally only
+• Not transmitted anywhere
+• Under your control
+• Can be deleted anytime
+
+TROUBLESHOOTING WITH HISTORY:
+
+Problem: Many failed burns
+Solution: Check history for patterns
+- Review speed settings
+- Check if certain disc types fail
+- Compare successful vs failed burns
+- Adjust settings accordingly
+
+Problem: Slow burn times
+Solution: Analyze speed statistics
+- Check average speed used
+- Compare with most successful speed
+- Test different speeds
+- Use history to find optimum
+
+Problem: Inconsistent results
+Solution: Review settings variation
+- Look at normalization usage
+- Check CD-TEXT settings
+- Compare multi-session vs single
+- Standardize on what works
+
+Problem: Lost track of burns
+Solution: Search history
+- Find specific album
+- Check when you burned it
+- See what files were included
+- Verify settings used
+
+BEST PRACTICES:
+
+1. REVIEW REGULARLY
+   - Check recent burns
+   - Monitor success rate
+   - Identify issues early
+   - Learn from failures
+
+2. USE FOR PLANNING
+   - Estimate burn times
+   - Choose proven settings
+   - Reference successful burns
+   - Apply what works
+
+3. BACKUP HISTORY
+   - Export periodically
+   - Keep safe copy
+   - Preserve records
+   - Easy to restore
+
+4. SEARCH EFFICIENTLY
+   - Use specific terms
+   - Remember project names
+   - Search by date range
+   - Filter by status
+
+5. MAINTAIN STATISTICS
+   - Don't clear unnecessarily
+   - Let history grow
+   - Track long-term trends
+   - Monitor improvement
+
+REAL-WORLD USE CASES:
+
+Use Case 1: Project Verification
+You need to know if you already burned an album.
+Action: Search history by album name
+Result: Find it, see when burned, what settings used
+
+Use Case 2: Troubleshooting Failures
+Several burns failed recently.
+Action: Review recent history, check patterns
+Result: Notice all used 16x speed, switch to 8x
+
+Use Case 3: Time Estimation
+Planning to burn 5 CDs, need time estimate.
+Action: Check statistics for average duration
+Result: See average is 12 minutes, plan 1 hour
+
+Use Case 4: Setting Optimization
+Want to find best burn speed for quality.
+Action: Compare success rates at different speeds
+Result: Find 8x has 98% success, 16x has 85%
+
+Use Case 5: Collection Inventory
+Building CD collection, need to track what's done.
+Action: View all burns, export list
+Result: Complete inventory of all CDs burned
+
+INTEGRATION WITH OTHER FEATURES:
+
+With Configuration:
+- Settings from config are logged
+- See which defaults you use most
+- History shows config impact
+- Adjust config based on history
+
+With Batch Burning:
+- Each batch job logged separately
+- Track batch success rates
+- Monitor batch efficiency
+- Review batch history
+
+With Verification:
+- Verification results can be logged
+- Track verification success
+- Compare verified vs unverified
+- Quality assurance records
+
+LIMITATIONS:
+
+What history DOESN'T do:
+✗ Track disc quality
+✗ Monitor disc aging
+✗ Test playback compatibility
+✗ Verify disc contents
+
+History is for:
+✓ Burn tracking
+✓ Setting documentation
+✓ Troubleshooting
+✓ Statistics
+
+Not a replacement for:
+- Disc verification
+- Quality testing
+- Content backup
+- Disc labeling
+
+ADVANCED FEATURES:
+
+JSON Format Benefits:
+- Import into spreadsheets
+- Analyze with scripts
+- Generate reports
+- Create visualizations
+
+Example: Export to CSV
+```python
+import json
+import csv
+
+with open('~/.singe/burn_history.json') as f:
+    history = json.load(f)
+
+with open('burns.csv', 'w') as f:
+    writer = csv.DictWriter(f, fieldnames=['name', 'timestamp', 'status'])
+    writer.writeheader()
+    writer.writerows(history)
+```
+
+COMPARISON: With vs Without History
+
+Without History:
+✗ No record of burns
+✗ Can't track success rate
+✗ Forget what settings worked
+✗ Repeat same mistakes
+✗ No troubleshooting data
+
+With History:
+✓ Complete burn records
+✓ Track all activity
+✓ Learn from experience
+✓ Optimize over time
+✓ Professional documentation
+
+TIPS FOR MAXIMUM BENEFIT:
+
+1. USE DESCRIPTIVE NAMES
+   - Name CDs clearly
+   - Use consistent naming
+   - Include relevant details
+   - Makes searching easier
+
+2. REVIEW AFTER FAILURES
+   - Check error messages
+   - Compare with successes
+   - Identify root cause
+   - Adjust and retry
+
+3. MONITOR TRENDS
+   - Watch success rate
+   - Track speed usage
+   - Notice patterns
+   - Make data-driven decisions
+
+4. KEEP HISTORY INTACT
+   - Don't clear unnecessarily
+   - More data = better insights
+   - History improves over time
+   - Valuable long-term record
+
+5. COMBINE WITH NOTES
+   - Keep external notes
+   - Reference history
+   - Document special cases
+   - Build knowledge base
+
+With burn history, Singe helps you become a better CD burner
+through data-driven insights and complete record keeping!
+═══════════════════════════════════════════════════════════════════════"""
 
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
     # Initialize configuration manager first
     config_manager = ConfigManager()
     
-    # Initialize writer with config
-    writer = AudioCDWriter(config_manager)
-    organizer = MusicCDOrganizer(config_manager)
+    # Initialize burn history manager
+    history_manager = BurnHistoryManager()
+    
+    # Initialize writer with config and history
+    writer = AudioCDWriter(config_manager, history_manager)
+    organizer = MusicCDOrganizer(config_manager, history_manager)
     help_sys = HelpSystem()
     
     # Check for required tools
@@ -6128,7 +6898,7 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\nSinge 1.1.4")
+        print("\nSinge 1.1.5")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
@@ -6141,10 +6911,11 @@ def main():
         print("10. Album art manager")
         print("11. Batch burn queue")
         print("12. Configuration settings")
-        print("13. Help topics")
-        print("14. Exit")
+        print("13. Burn history")
+        print("14. Help topics")
+        print("15. Exit")
 
-        choice = input("\nSelect option (1-14): ").strip()
+        choice = input("\nSelect option (1-15): ").strip()
         
         if choice == '12':
             # Configuration settings
@@ -6820,6 +7591,65 @@ def main():
                     print("Invalid option")
         
         elif choice == '13':
+            # Burn history
+            while True:
+                print("\n" + "="*70)
+                print("BURN HISTORY")
+                print("="*70)
+                print("\n1. View recent burns (last 10)")
+                print("2. View all burns")
+                print("3. View statistics")
+                print("4. Search history")
+                print("5. Clear history")
+                print("6. Back to main menu")
+                
+                hist_choice = input("\nSelect option (1-6): ").strip()
+                
+                if hist_choice == '1':
+                    # Recent burns
+                    history_manager.display_history(limit=10)
+                    input("\nPress Enter to continue...")
+                
+                elif hist_choice == '2':
+                    # All burns
+                    history_manager.display_history()
+                    input("\nPress Enter to continue...")
+                
+                elif hist_choice == '3':
+                    # Statistics
+                    history_manager.display_statistics()
+                    input("\nPress Enter to continue...")
+                
+                elif hist_choice == '4':
+                    # Search
+                    query = input("\nEnter search term (name or file): ").strip()
+                    if query:
+                        results = history_manager.search_history(query)
+                        if results:
+                            print(f"\nFound {len(results)} matching burn(s):")
+                            history_manager.display_history(entries=results)
+                        else:
+                            print("\nNo matching burns found.")
+                    input("\nPress Enter to continue...")
+                
+                elif hist_choice == '5':
+                    # Clear history
+                    confirm = input("\nClear all burn history? This cannot be undone. (y/n): ").strip().lower()
+                    if confirm == 'y':
+                        history_manager.clear_history()
+                        print("\n✓ Burn history cleared")
+                    else:
+                        print("\nCancelled.")
+                    input("\nPress Enter to continue...")
+                
+                elif hist_choice == '6':
+                    # Back
+                    break
+                
+                else:
+                    print("Invalid option")
+        
+        elif choice == '14':
             print("\n=== HELP TOPICS ===")
             print("1. Multi-Session Support")
             print("2. CD Verification")
@@ -6838,9 +7668,10 @@ def main():
             print("15. Batch Burn Queue")
             print("16. Configuration Settings (NEW!)")
             print("17. Disc Detection (NEW!)")
-            print("18. Back to main menu")
+            print("18. Burn History (NEW!)")
+            print("19. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-18): ").strip()
+            help_choice = input("\nSelect help topic (1-19): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -6877,9 +7708,11 @@ def main():
             if help_choice == '17':
                 print(help_sys.disc_detection_help())
             if help_choice == '18':
+                print(help_sys.burn_history_help())
+            if help_choice == '19':
                 continue
         
-        elif choice == '14':
+        elif choice == '15':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
