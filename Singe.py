@@ -876,6 +876,27 @@ class AudioCDWriter:
             print("  No need to erase.")
             return True
         
+        # Check if disc is CD-RW
+        disc_type = disc_info.get('disc_type', 'unknown')
+        if disc_type == 'CD-R':
+            print("\n✗ Cannot erase this disc")
+            print("  This is a CD-R (write-once) disc.")
+            print("  Only CD-RW (rewritable) discs can be erased.")
+            print("\n  Tip: Look for 'CD-RW' or 'ReWritable' on the disc label.")
+            return False
+        elif disc_type == 'unknown':
+            print("\n⚠ Warning: Unable to determine disc type")
+            print("  This disc might not be a CD-RW.")
+            print("  Only CD-RW (rewritable) discs can be erased.")
+            print("  CD-R (write-once) discs cannot be erased.")
+            
+            confirm_unknown = input("\nDo you want to try erasing anyway? (yes/no): ").strip().lower()
+            if confirm_unknown != 'yes':
+                print("\nErase cancelled.")
+                return False
+        else:
+            print(f"\n✓ Disc type: {disc_type} (rewritable)")
+        
         # Warn about data loss
         print("\n" + "="*70)
         print("⚠ WARNING: ERASE WILL PERMANENTLY DELETE ALL DATA")
@@ -1062,6 +1083,7 @@ class AudioCDWriter:
                 'blank': False,
                 'appendable': False,
                 'finalized': False,
+                'disc_type': 'unknown',  # CD-R, CD-RW, or unknown
                 'sessions': 0,
                 'tracks': 0,
                 'used_capacity': 0,
@@ -1075,6 +1097,36 @@ class AudioCDWriter:
                 return disc_info
             
             disc_info['inserted'] = True
+            
+            # Detect disc type (CD-R vs CD-RW)
+            try:
+                # Try using wodim to get disc info
+                wodim_result = subprocess.run(
+                    ['wodim', '-v', f'dev={self.device}', '-atip'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                
+                wodim_output = wodim_result.stderr + wodim_result.stdout
+                
+                # Look for disc type indicators
+                if 'CD-RW' in wodim_output or 'ReWritable' in wodim_output:
+                    disc_info['disc_type'] = 'CD-RW'
+                elif 'CD-R' in wodim_output:
+                    disc_info['disc_type'] = 'CD-R'
+                # Also check cdrdao output
+                elif 'rewritable' in output.lower() or 'rw' in output.lower():
+                    disc_info['disc_type'] = 'CD-RW'
+                elif 'recordable' in output.lower():
+                    disc_info['disc_type'] = 'CD-R'
+                    
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                # If wodim fails, try to infer from cdrdao output
+                if 'rewritable' in output.lower() or 'rw' in output.lower():
+                    disc_info['disc_type'] = 'CD-RW'
+                elif 'recordable' in output.lower():
+                    disc_info['disc_type'] = 'CD-R'
             
             # Check if blank
             if 'blank' in output.lower():
@@ -1126,23 +1178,34 @@ class AudioCDWriter:
         if not disc_info['inserted']:
             print("✗ No disc inserted")
             print("  Please insert a disc and try again.")
-        elif disc_info['blank']:
-            print("✓ Blank disc detected")
-            print(f"  Available capacity: {self._format_time(disc_info['remaining_capacity'])}")
-        elif disc_info['appendable']:
-            print("✓ Appendable disc detected (multi-session capable)")
-            print(f"  Existing tracks: {disc_info['tracks']}")
-            print("  Status: Open for additional sessions")
-            print("\n  You can add more tracks to this disc!")
-        elif disc_info['finalized']:
-            print("⚠ Finalized disc detected")
-            print(f"  Existing tracks: {disc_info['tracks']}")
-            print("  Status: Closed/Finalized")
-            print("\n  This disc cannot accept additional tracks.")
-            print("  Use a CD-RW and erase it, or use a different disc.")
         else:
-            print("? Unknown disc status")
-            print(f"  Existing tracks: {disc_info['tracks']}")
+            print("✓ Disc detected")
+            
+            # Display disc type
+            disc_type = disc_info.get('disc_type', 'unknown')
+            if disc_type == 'CD-RW':
+                print(f"  Type: {disc_type} (ReWritable - can be erased)")
+            elif disc_type == 'CD-R':
+                print(f"  Type: {disc_type} (Write-once - cannot be erased)")
+            else:
+                print(f"  Type: {disc_type} (Unable to determine)")
+            
+            # Display status
+            if disc_info['blank']:
+                print("  Status: Blank disc")
+                print(f"  Available capacity: {self._format_time(disc_info['remaining_capacity'])}")
+            elif disc_info['appendable']:
+                print("  Status: Appendable (multi-session capable)")
+                print(f"  Existing tracks: {disc_info['tracks']}")
+                print("  Can add more tracks to this disc!")
+            elif disc_info['finalized']:
+                print("  Status: Finalized")
+                print(f"  Existing tracks: {disc_info['tracks']}")
+                print("  Cannot accept additional tracks.")
+                print("  Use a CD-RW and erase it, or use a different disc.")
+            else:
+                print("  Status: Unknown")
+                print(f"  Existing tracks: {disc_info['tracks']}")
         
         print("="*70)
         
@@ -8478,8 +8541,36 @@ def main():
         
         elif choice == '5':
             # Check disc status
+            print("\n" + "="*70)
+            print("DISC STATUS CHECK")
+            print("="*70)
+            print("\nChecking disc...")
+            
             disc_info = writer.check_disc_status()
             writer.display_disc_status(disc_info)
+            
+            # Show additional details
+            if disc_info.get('inserted', False):
+                disc_type = disc_info.get('disc_type', 'unknown')
+                print("\nDisc Capabilities:")
+                
+                if disc_type == 'CD-RW':
+                    print("  ✓ Can be erased (use Option 12: Erase CD-RW disc)")
+                    print("  ✓ Can be rewritten multiple times (~1000 cycles)")
+                    print("  ✓ Reusable media")
+                elif disc_type == 'CD-R':
+                    print("  ✗ Cannot be erased (write-once only)")
+                    print("  ✓ Permanent storage")
+                    print("  ✓ Better compatibility with older players")
+                else:
+                    print("  ? Disc type unknown - capabilities uncertain")
+                
+                if disc_info.get('appendable', False):
+                    print("  ✓ Multi-session: Can add more tracks (use Option 4)")
+                elif disc_info.get('finalized', False):
+                    print("  ✗ Finalized: Cannot add more tracks")
+            
+            input("\nPress Enter to continue...")
         
         elif choice == '6':
             output_dir = input("Enter output directory (default: ./ripped_tracks): ").strip()
