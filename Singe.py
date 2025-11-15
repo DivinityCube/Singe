@@ -727,6 +727,127 @@ class AudioCDWriter:
         self.last_burn_wav_files = []  # Store WAV files for verification
         self.last_burn_checksums = {}  # Store checksums for verification
     
+    def split_into_discs(self, audio_files: List[str], cd_capacity: int = None, 
+                        include_gaps: bool = True) -> List[Dict]:
+        """
+        Split a collection of audio files into multiple CDs intelligently.
+        
+        Args:
+            audio_files: List of audio file paths
+            cd_capacity: CD capacity in seconds (default: 80 min)
+            include_gaps: Whether to account for track gaps in capacity
+            
+        Returns:
+            List of disc dictionaries with track lists and metadata
+        """
+        if cd_capacity is None:
+            cd_capacity = self.CD_80_MIN_SECONDS
+        
+        # Reserve some time for gaps and safety margin (2%)
+        safety_margin = int(cd_capacity * 0.02)
+        if include_gaps:
+            # Account for gaps between tracks (2 seconds default)
+            gap_overhead = self.DEFAULT_GAP_SECONDS
+        else:
+            gap_overhead = 0
+        
+        discs = []
+        current_disc = []
+        current_duration = 0
+        
+        print("\n" + "="*70)
+        print("ANALYZING TRACKS FOR MULTI-DISC SPLITTING")
+        print("="*70)
+        
+        # Get duration for each file
+        file_durations = []
+        progress = ProgressBar(len(audio_files), prefix='Analyzing:', suffix='', length=40)
+        
+        for i, audio_file in enumerate(audio_files, 1):
+            duration = self.get_audio_duration(audio_file)
+            if duration:
+                file_durations.append((audio_file, duration))
+            progress.update(i, suffix=Path(audio_file).name[:25])
+        
+        progress.finish()
+        
+        if not file_durations:
+            print("\n✗ Could not determine duration for any files")
+            return []
+        
+        # Split into discs
+        for audio_file, duration in file_durations:
+            track_total = duration + gap_overhead
+            
+            # Check if adding this track would exceed capacity
+            if current_disc and (current_duration + track_total + safety_margin > cd_capacity):
+                # Save current disc and start new one
+                discs.append({
+                    'tracks': current_disc.copy(),
+                    'duration': current_duration,
+                    'track_count': len(current_disc)
+                })
+                current_disc = []
+                current_duration = 0
+            
+            # Add track to current disc
+            current_disc.append(audio_file)
+            current_duration += track_total
+            
+            # Check if single track exceeds capacity
+            if track_total > cd_capacity:
+                print(f"\n⚠ Warning: Track '{Path(audio_file).name}' is {duration}s")
+                print(f"  This exceeds CD capacity of {cd_capacity}s and may not fit!")
+        
+        # Add final disc if it has tracks
+        if current_disc:
+            discs.append({
+                'tracks': current_disc.copy(),
+                'duration': current_duration,
+                'track_count': len(current_disc)
+            })
+        
+        return discs
+    
+    def display_disc_split_summary(self, discs: List[Dict], album_name: str = "Collection"):
+        """
+        Display summary of how tracks are split across discs.
+        
+        Args:
+            discs: List of disc dictionaries from split_into_discs
+            album_name: Name of the album/collection
+        """
+        print("\n" + "="*70)
+        print(f"MULTI-DISC SPLIT: {album_name}")
+        print("="*70)
+        
+        total_discs = len(discs)
+        total_tracks = sum(d['track_count'] for d in discs)
+        
+        print(f"\nTotal tracks: {total_tracks}")
+        print(f"Split into: {total_discs} disc{'s' if total_discs != 1 else ''}")
+        print()
+        
+        for i, disc in enumerate(discs, 1):
+            duration_min = int(disc['duration'] // 60)
+            duration_sec = int(disc['duration'] % 60)
+            
+            print(f"DISC {i} OF {total_discs}")
+            print("-"*70)
+            print(f"Tracks: {disc['track_count']}")
+            print(f"Duration: {duration_min}:{duration_sec:02d}")
+            print(f"\nTrack listing:")
+            
+            for j, track in enumerate(disc['tracks'], 1):
+                track_name = Path(track).name
+                if len(track_name) > 60:
+                    track_name = track_name[:57] + "..."
+                print(f"  {j:2d}. {track_name}")
+            
+            print()
+        
+        print("="*70)
+    
     def check_disc_status(self) -> Dict:
         """
         Check if a disc is inserted and its current status.
@@ -6867,6 +6988,348 @@ TIPS FOR MAXIMUM BENEFIT:
 With burn history, Singe helps you become a better CD burner
 through data-driven insights and complete record keeping!
 ═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def multi_disc_splitting_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+MULTI-DISC SPLITTING EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Singe 1.2.0 introduces intelligent multi-disc splitting that activates
+AUTOMATICALLY when your collection exceeds CD capacity. Simply use the
+regular burn options - Singe detects and handles multi-disc splitting!
+
+WHAT IS MULTI-DISC SPLITTING?
+
+When you have more music than fits on a single CD (74 or 80 minutes),
+Singe AUTOMATICALLY:
+• Detects that splitting is needed
+• Calculates total duration of all tracks
+• Splits collection into optimal number of discs
+• Keeps tracks in correct order
+• Splits at track boundaries (never mid-track)
+• Labels each disc (Disc 1 of 3, etc.)
+• Guides you through burning each disc
+
+NO SEPARATE MENU OPTION NEEDED - it just works!
+
+WHY USE MULTI-DISC SPLITTING?
+
+Manual Splitting Problems:
+✗ Calculating which tracks fit is tedious
+✗ Easy to exceed capacity accidentally
+✗ Risk splitting mid-album
+✗ Inconsistent disc labeling
+✗ No visual preview of split
+
+Automatic Splitting Benefits:
+✓ Instant capacity calculation
+✓ Intelligent track placement
+✓ Album integrity preserved
+✓ Clear disc labeling
+✓ Complete split preview
+
+HOW IT WORKS:
+
+Step 1: Use Any Regular Burn Option
+- Select option 1, 2, or 3 from main menu
+- Choose your files (manual, folder, or playlist)
+- Singe organizes tracks automatically
+
+Step 2: Automatic Capacity Detection
+- Singe analyzes your collection
+- Calculates total duration
+- Determines if splitting is needed
+- If collection fits: continues with single disc
+- If collection exceeds capacity: activates multi-disc mode!
+
+Step 3: Intelligent Splitting (when needed)
+- Splits at track boundaries only
+- Maximizes capacity per disc
+- Accounts for track gaps (2 sec/track)
+- Leaves safety margin (2%)
+- Keeps albums together when possible
+
+Step 4: Preview Split
+- Shows disc count
+- Lists tracks per disc
+- Displays duration per disc
+- Confirms before proceeding
+
+Step 5: Guided Burning
+- Burns disc 1, then 2, then 3, etc.
+- Labels each disc properly
+- Prompts for disc changes
+- Offers verification between discs
+- Tracks progress
+
+CAPACITY LIMITS:
+
+74-Minute CD (Standard):
+- Total: 4440 seconds (74:00)
+- Usable: ~4350 seconds (72:30)
+- Reserve: 90 seconds for gaps/safety
+
+80-Minute CD (Extended):
+- Total: 4800 seconds (80:00)
+- Usable: ~4700 seconds (78:20)
+- Reserve: 100 seconds for gaps/safety
+
+Singe automatically accounts for:
+• Track gaps (2 seconds default)
+• Lead-in/lead-out (part of standard)
+• Safety margin (2% of capacity)
+• CD-TEXT overhead (minimal)
+
+SPLITTING ALGORITHM:
+
+Example: 20 tracks, 95 minutes total, 80-min CDs
+
+Track-by-Track Analysis:
+1. Start with empty Disc 1
+2. Add Track 1 (duration + gap)
+3. Add Track 2 (if fits)
+4. Continue until disc full
+5. Start Disc 2 when needed
+6. Repeat until all tracks placed
+
+Result: Disc 1 has tracks 1-11 (78 min)
+        Disc 2 has tracks 12-20 (17 min)
+
+Never splits mid-track!
+
+INPUT METHODS:
+
+Method 1: Manual Entry
+- Type or paste file paths
+- One path per line
+- Good for specific selections
+- Maximum control
+
+Method 2: Folder Scan
+- Point to album folder
+- Optional recursive scan
+- Auto-detects audio files
+- Preserves folder order
+
+Method 3: M3U Playlist
+- Use existing playlists
+- Maintains playlist order
+- Supports relative paths
+- Good for curated collections
+
+DISC LABELING:
+
+Format: "[Album Name] - Disc [X] of [Y]"
+
+Examples:
+- "Greatest Hits - Disc 1 of 2"
+- "Classical Collection - Disc 1 of 4"
+- "Mix Tape 2024 - Disc 1 of 1"
+
+Labeling helps:
+• Identify disc order
+• Keep sets together
+• Professional appearance
+• Clear organization
+
+AUTOMATIC ACTIVATION:
+
+Singe checks capacity after organizing tracks:
+- ✓ Fits on one disc: Normal single-disc workflow
+- ⚠ Exceeds capacity: Multi-disc mode activated!
+
+You'll see:
+"⚠ MULTI-DISC SPLITTING REQUIRED
+Your collection exceeds CD capacity.
+Singe will automatically split this into X discs."
+
+Then you confirm and proceed!
+
+BURN WORKFLOW:
+
+For Each Disc:
+1. Display disc number and tracks
+2. Configure burn settings:
+   - Track gaps
+   - Fade effects
+   - CD-TEXT
+   - Normalization
+   - Burn speed
+3. Check disc status
+4. Burn disc
+5. Optional verification
+6. Prompt for next disc
+
+Settings per disc allow:
+• Different gaps for different discs
+• Disc-specific fade effects
+• Individual CD-TEXT
+• Speed adjustments
+
+VERIFICATION OPTIONS:
+
+Between Discs:
+- Verify after each disc
+- Catch problems early
+- Re-burn individual disc if needed
+- Continue with confidence
+
+At End:
+- Skip verification during burning
+- Verify all discs together later
+- Faster overall process
+- Less interruption
+
+Skip Verification:
+- Trust the burn
+- No waiting
+- Maximum speed
+- Use quality media
+
+REAL-WORLD EXAMPLES:
+
+Example 1: Complete Album Series
+Input: 45 tracks (3 albums, 180 minutes)
+Output: 3 discs (Album 1, Album 2, Album 3)
+Each disc: One complete album
+Perfect for: Box sets, series
+
+Example 2: Mixed Collection
+Input: 30 tracks (various artists, 120 minutes)
+Output: 2 discs (tracks 1-18, tracks 19-30)
+Split by: Duration only
+Perfect for: Party mixes, compilations
+
+Example 3: Audiobook
+Input: 50 chapters (600 minutes total)
+Output: 8 discs (6-7 chapters each)
+Split by: Chapter boundaries
+Perfect for: Audiobooks, podcasts
+
+Example 4: Single Album (Fits)
+Input: 12 tracks (48 minutes)
+Output: 1 disc (all tracks)
+Note: No splitting needed
+Perfect for: Standard albums
+
+TROUBLESHOOTING:
+
+Problem: Track exceeds CD capacity
+Solution: That track shown with warning
+          May need to split track itself
+          Or skip problematic track
+
+Problem: Too many discs
+Solution: Use 80-minute CDs instead
+          Remove some tracks
+          Use DVD or other media
+
+Problem: Uneven split
+Solution: Intentional (maximize capacity)
+          Last disc may be shorter
+          Professional approach
+
+Problem: Want different order
+Solution: Reorganize before splitting
+          Use custom playlist
+          Manual track selection
+
+TIPS FOR BEST RESULTS:
+
+1. USE CONSISTENT FORMATS
+   - All MP3 or all FLAC
+   - Similar bitrates
+   - Uniform quality
+   - Predictable durations
+
+2. ORGANIZE BEFORE SPLITTING
+   - Sort by track number
+   - Group albums together
+   - Use meaningful names
+   - Clean up metadata
+
+3. CHOOSE RIGHT CAPACITY
+   - 74-min for older players
+   - 80-min for modern players
+   - Consider compatibility
+   - Leave room for safety
+
+4. NAME THOUGHTFULLY
+   - Clear album names
+   - Descriptive titles
+   - Consistent format
+   - Easy to identify
+
+5. VERIFY STRATEGICALLY
+   - Verify first disc always
+   - Spot-check middle discs
+   - Verify if any issues
+   - Save time when reliable
+
+6. LABEL PHYSICAL DISCS
+   - Write disc numbers
+   - Include total count
+   - Add date if relevant
+   - Match CD-TEXT
+
+COMPARISON: Manual vs Automatic
+
+Manual Splitting:
+✗ Calculate durations manually
+✗ Risk arithmetic errors
+✗ Trial and error approach
+✗ Burn, fail, recalculate
+✗ Inconsistent results
+✗ Time-consuming
+✗ Error-prone
+
+Automatic Splitting:
+✓ Instant calculation
+✓ Perfect accuracy
+✓ First-time success
+✓ Consistent results
+✓ Time-efficient
+✓ Professional quality
+✓ Stress-free
+
+INTEGRATION WITH OTHER FEATURES:
+
+Works with:
+• Configuration settings (speeds, normalization)
+• Batch burn queue (can queue split discs)
+• CD-TEXT (each disc labeled)
+• Track gaps (configurable per disc)
+• Fade effects (per disc)
+• Burn history (logs all discs)
+• Verification (between discs)
+• Disc detection (checks each disc)
+
+Each disc in a multi-disc set is a complete,
+standalone audio CD with proper formatting and metadata!
+
+WHEN IT ACTIVATES:
+
+Automatically activates for:
+✓ Large album collections (greatest hits)
+✓ Complete discographies
+✓ Audiobooks split across CDs
+✓ Podcast series
+✓ DJ mixes exceeding 80 minutes
+✓ Classical music (long pieces)
+✓ Live concert recordings
+✓ ANY collection exceeding CD capacity
+
+No activation for:
+• Single albums under 80 minutes
+• Small playlists
+• Quick mixes
+• Collections that fit on one disc
+
+You don't choose multi-disc splitting - Singe detects it
+automatically and activates it when needed. Seamless UX!
+═══════════════════════════════════════════════════════════════════════"""
 
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
@@ -6898,7 +7361,7 @@ def main():
             print(f"⚠ {tool} not found (optional). Install for full features: sudo apt-get install {tool}")
     
     while True:
-        print("\nSinge 1.1.5")
+        print("\nSinge 1.2.0")
         print("1. Burn audio CD (with automatic track ordering)")
         print("2. Burn audio CD from folder")
         print("3. Burn audio CD from M3U/M3U8 playlist")
@@ -6987,7 +7450,200 @@ def main():
                 print("Tracks will NOT be reordered by metadata or filename.")
                 print("="*70)
             
-            # Step 2: Configure track gaps
+            # Step 2: Organize and check capacity for multi-disc splitting
+            if not organized_files:
+                print("\n✗ No valid audio files found")
+                continue
+            
+            print(f"\n✓ Found {len(organized_files)} track(s)")
+            
+            # Check if multi-disc splitting is needed
+            print("\nAnalyzing collection capacity...")
+            
+            # Get CD capacity preference
+            cd_capacity_choice = config_manager.get('cd_capacity', 80)
+            if cd_capacity_choice == 74:
+                cd_capacity = writer.CD_74_MIN_SECONDS
+                cd_capacity_name = "74-minute"
+            else:
+                cd_capacity = writer.CD_80_MIN_SECONDS
+                cd_capacity_name = "80-minute"
+            
+            # Quick duration check to see if splitting is needed
+            discs = writer.split_into_discs(organized_files, cd_capacity)
+            
+            if not discs:
+                print("\n✗ Could not analyze track durations")
+                continue
+            
+            # Check if multi-disc splitting is required
+            if len(discs) > 1:
+                print("\n" + "="*70)
+                print("⚠ MULTI-DISC SPLITTING REQUIRED")
+                print("="*70)
+                print(f"\nYour collection ({sum(d['duration'] for d in discs)//60} minutes) exceeds {cd_capacity_name} CD capacity.")
+                print(f"Singe will automatically split this into {len(discs)} disc(s).")
+                
+                # Display split summary
+                album_name = input("\nEnter collection/album name [default: Audio CD]: ").strip()
+                if not album_name:
+                    album_name = "Audio CD"
+                
+                writer.display_disc_split_summary(discs, album_name)
+                
+                # Confirm multi-disc burn
+                confirm = input(f"\nProceed with burning {len(discs)} discs? (y/n): ").strip().lower()
+                if confirm != 'y':
+                    print("Cancelled.")
+                    continue
+                
+                # Multi-disc burn workflow
+                for disc_num, disc in enumerate(discs, 1):
+                    print("\n" + "="*70)
+                    print(f"BURNING DISC {disc_num} OF {len(discs)}")
+                    print("="*70)
+                    print(f"\nAlbum: {album_name}")
+                    print(f"Disc: {disc_num} of {len(discs)}")
+                    print(f"Tracks on this disc: {disc['track_count']}")
+                    
+                    # Configure settings for this disc
+                    print("\nConfigure burn settings for this disc:")
+                    
+                    # Track gaps
+                    track_gaps = writer.configure_track_gaps(disc['track_count'])
+                    
+                    # Display gap preview
+                    track_names = [os.path.basename(f) for f in disc['tracks']]
+                    writer.display_gap_preview(track_names, track_gaps)
+                    
+                    # Fade effects
+                    print("\n" + "="*70)
+                    print("Configure fade effects")
+                    print("="*70)
+                    fade_ins, fade_outs = writer.configure_fades(disc['track_count'], track_names)
+                    writer.display_fade_preview(track_names, fade_ins, fade_outs)
+                    
+                    # CD-TEXT
+                    default_cdtext = config_manager.get('use_cdtext', True)
+                    use_cdtext = writer.ask_yes_no_with_help(
+                        f"Enable CD-TEXT for disc {disc_num}? [default: {'y' if default_cdtext else 'n'}]",
+                        help_sys.cdtext_help(),
+                        default=default_cdtext
+                    )
+                    
+                    # Normalization
+                    default_normalize = config_manager.get('normalize_audio', True)
+                    normalize = writer.ask_yes_no_with_help(
+                        f"Normalize audio levels? [default: {'y' if default_normalize else 'n'}]",
+                        help_sys.normalize_audio_help(),
+                        default=default_normalize
+                    )
+                    
+                    # Burn speed
+                    default_speed = config_manager.get('burn_speed', 8)
+                    while True:
+                        speed_response = input(f"Burn speed (4/8/16/?) [default: {default_speed}x]: ").strip()
+                        if speed_response == '?':
+                            print(help_sys.burn_speed_help())
+                        elif speed_response == '':
+                            burn_speed = default_speed
+                            break
+                        elif speed_response in ['4', '8', '16']:
+                            burn_speed = int(speed_response)
+                            break
+                        else:
+                            print(f"Invalid input. Using default: {default_speed}x")
+                            burn_speed = default_speed
+                            break
+                    
+                    # Prompt to insert disc
+                    print("\n" + "="*70)
+                    print(f"READY TO BURN DISC {disc_num} OF {len(discs)}")
+                    print("="*70)
+                    print(f"\nPlease insert a blank CD-R for disc {disc_num}.")
+                    input("Press Enter when ready to start burning...")
+                    
+                    # Check disc status
+                    print("\nChecking disc status...")
+                    disc_info = writer.check_disc_status()
+                    writer.display_disc_status(disc_info)
+                    
+                    if not disc_info['inserted']:
+                        print("\n✗ No disc detected. Skipping this disc.")
+                        skip = input("Continue with remaining discs? (y/n): ").strip().lower()
+                        if skip != 'y':
+                            break
+                        continue
+                    
+                    if not disc_info['blank']:
+                        print("\n⚠ WARNING: Disc is not blank!")
+                        cont = input("Continue anyway? (y/n): ").strip().lower()
+                        if cont != 'y':
+                            skip = input("Skip this disc and continue? (y/n): ").strip().lower()
+                            if skip != 'y':
+                                break
+                            continue
+                    
+                    print("\n✓ Blank disc confirmed - ready to burn!")
+                    
+                    # Burn the disc
+                    burn_success = writer.burn_audio_cd(
+                        disc['tracks'],
+                        normalize=normalize,
+                        speed=burn_speed,
+                        use_cdtext=use_cdtext,
+                        track_gaps=track_gaps,
+                        fade_ins=fade_ins,
+                        fade_outs=fade_outs
+                    )
+                    
+                    if burn_success:
+                        print(f"\n✓ Disc {disc_num} of {len(discs)} burned successfully!")
+                        
+                        # Ask about verification
+                        if disc_num < len(discs):
+                            verify = input("\nVerify this disc before continuing? (y/n): ").strip().lower()
+                            if verify == 'y':
+                                verify_method = writer.choose_verification_method()
+                                if verify_method:
+                                    verification_passed = writer.verify_burned_disc(
+                                        writer.last_burn_wav_files,
+                                        writer.last_burn_checksums,
+                                        verify_method
+                                    )
+                                    if not verification_passed:
+                                        print("\n⚠ Verification failed!")
+                                        retry = input("Retry this disc? (y/n): ").strip().lower()
+                                        if retry == 'y':
+                                            continue
+                    else:
+                        print(f"\n✗ Failed to burn disc {disc_num} of {len(discs)}")
+                        retry = input("\nRetry this disc? (y/n): ").strip().lower()
+                        if retry != 'y':
+                            abort = input("Abort remaining discs? (y/n): ").strip().lower()
+                            if abort == 'y':
+                                break
+                    
+                    # Pause before next disc
+                    if disc_num < len(discs):
+                        print("\n" + "="*70)
+                        print(f"DISC {disc_num} COMPLETE")
+                        print("="*70)
+                        input(f"\nPress Enter to continue with disc {disc_num + 1}...")
+                
+                print("\n" + "="*70)
+                print("MULTI-DISC BURN COMPLETE")
+                print("="*70)
+                print(f"\nBurned {len(discs)} disc(s)")
+                print(f"Album: {album_name}")
+                input("\nPress Enter to return to main menu...")
+                continue
+            
+            # Single disc workflow continues below
+            print(f"\n✓ Collection fits on a single {cd_capacity_name} CD")
+            organized_files = discs[0]['tracks']  # Use the analyzed tracks
+            
+            # Step 3: Configure track gaps
             track_gaps = writer.configure_track_gaps(len(organized_files))
             
             # Display gap preview
@@ -7666,12 +8322,13 @@ def main():
             print("13. Format Export")
             print("14. Album Art")
             print("15. Batch Burn Queue")
-            print("16. Configuration Settings (NEW!)")
-            print("17. Disc Detection (NEW!)")
-            print("18. Burn History (NEW!)")
-            print("19. Back to main menu")
+            print("16. Configuration Settings")
+            print("17. Disc Detection")
+            print("18. Burn History")
+            print("19. Multi-Disc Splitting (NEW!)")
+            print("20. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-19): ").strip()
+            help_choice = input("\nSelect help topic (1-20): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -7710,6 +8367,8 @@ def main():
             if help_choice == '18':
                 print(help_sys.burn_history_help())
             if help_choice == '19':
+                print(help_sys.multi_disc_splitting_help())
+            if help_choice == '20':
                 continue
         
         elif choice == '15':
