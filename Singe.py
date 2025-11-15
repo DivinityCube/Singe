@@ -848,6 +848,199 @@ class AudioCDWriter:
         
         print("="*70)
     
+    def erase_disc(self, erase_mode: str = 'fast') -> bool:
+        """
+        Erase/blank a CD-RW disc.
+        
+        Args:
+            erase_mode: Erase mode - 'fast' (quick erase), 'full' (complete erase), or 'all' (erase everything)
+        
+        Returns:
+            True if erase successful, False otherwise
+        """
+        print("\n" + "="*70)
+        print("CD-RW DISC ERASE")
+        print("="*70)
+        
+        # Check disc status first
+        print("\nChecking disc status...")
+        disc_info = self.check_disc_status()
+        
+        if not disc_info['inserted']:
+            print("\n✗ No disc detected")
+            print("  Please insert a CD-RW disc and try again.")
+            return False
+        
+        if disc_info['blank']:
+            print("\nℹ Disc is already blank")
+            print("  No need to erase.")
+            return True
+        
+        # Warn about data loss
+        print("\n" + "="*70)
+        print("⚠ WARNING: ERASE WILL PERMANENTLY DELETE ALL DATA")
+        print("="*70)
+        
+        if disc_info['tracks'] > 0:
+            print(f"\nThis disc contains {disc_info['tracks']} track(s).")
+        print("All data on this disc will be permanently erased.")
+        
+        confirm = input("\nAre you sure you want to erase this disc? (yes/no): ").strip().lower()
+        if confirm != 'yes':
+            print("\nErase cancelled.")
+            return False
+        
+        # Map erase mode to cdrdao blank-mode
+        mode_map = {
+            'fast': 'fast',      # Fast blank (TOC only)
+            'full': 'full',      # Full blank (entire disc)
+            'all': 'all'         # Erase everything
+        }
+        
+        blank_mode = mode_map.get(erase_mode, 'fast')
+        
+        print("\n" + "="*70)
+        print(f"ERASING DISC ({erase_mode.upper()} MODE)")
+        print("="*70)
+        
+        if erase_mode == 'fast':
+            print("\nFast erase: Erasing TOC only (quick, ~1 minute)")
+        elif erase_mode == 'full':
+            print("\nFull erase: Erasing entire disc (thorough, ~1 hour)")
+        else:
+            print("\nComplete erase: Erasing everything (most thorough)")
+        
+        print("\nThis may take a while. Please do not remove the disc.")
+        print("Press Ctrl+C to cancel at any time.\n")
+        
+        try:
+            # Use cdrdao to blank the disc
+            cmd = ['cdrdao', 'blank', f'--blank-mode', blank_mode, '--device', self.device, '--force']
+            
+            # Create progress indicator
+            progress = ProgressBar(100, prefix='Erasing:', suffix='', length=40)
+            
+            # Start the erase process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+            
+            # Monitor progress
+            erase_complete = False
+            while True:
+                output = process.stderr.readline()
+                if output == '' and process.poll() is not None:
+                    break
+                
+                if output:
+                    # Look for progress indicators
+                    if '%' in output:
+                        try:
+                            # Extract percentage
+                            parts = output.split('%')
+                            if parts:
+                                pct_str = ''.join(filter(str.isdigit, parts[0].split()[-1]))
+                                if pct_str:
+                                    pct = int(pct_str)
+                                    progress.update(pct, suffix=f'{pct}%')
+                        except (ValueError, IndexError):
+                            pass
+                    
+                    if 'Blanking disk' in output or 'Erasing' in output:
+                        if not erase_complete:
+                            print("Erase started...")
+            
+            # Get return code
+            return_code = process.poll()
+            progress.finish()
+            
+            if return_code == 0:
+                print("\n" + "="*70)
+                print("✓ DISC ERASED SUCCESSFULLY")
+                print("="*70)
+                print("\nThe CD-RW is now blank and ready for burning.")
+                return True
+            else:
+                stderr = process.stderr.read()
+                print("\n" + "="*70)
+                print("✗ ERASE FAILED")
+                print("="*70)
+                print(f"\nError: {stderr}")
+                print("\nPossible reasons:")
+                print("  - Disc is not a CD-RW (only rewritable discs can be erased)")
+                print("  - Disc is write-protected")
+                print("  - Drive does not support erasing")
+                print("  - Disc is damaged")
+                return False
+        
+        except KeyboardInterrupt:
+            print("\n\nErase cancelled by user.")
+            # Try to stop the process
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except:
+                pass
+            return False
+        
+        except Exception as e:
+            print(f"\n✗ Erase error: {e}")
+            return False
+    
+    def erase_disc_interactive(self):
+        """
+        Interactive CD-RW erase with mode selection.
+        """
+        print("\n" + "="*70)
+        print("CD-RW DISC ERASE")
+        print("="*70)
+        print("\nThis feature erases CD-RW discs so they can be reused.")
+        print("Note: Only rewritable discs (CD-RW) can be erased.")
+        print("      Regular CD-R discs cannot be erased.")
+        
+        # Select erase mode
+        print("\n" + "="*70)
+        print("SELECT ERASE MODE")
+        print("="*70)
+        print("\n1. Fast erase (recommended)")
+        print("   - Erases table of contents (TOC) only")
+        print("   - Quick (~1 minute)")
+        print("   - Makes disc appear blank")
+        print("   - Suitable for most uses")
+        
+        print("\n2. Full erase (thorough)")
+        print("   - Erases entire disc surface")
+        print("   - Slow (~60 minutes for 80-min disc)")
+        print("   - Most secure data removal")
+        print("   - Use if selling/giving away disc")
+        
+        print("\n3. Cancel")
+        
+        while True:
+            choice = input("\nSelect erase mode (1-3): ").strip()
+            
+            if choice == '1':
+                erase_mode = 'fast'
+                break
+            elif choice == '2':
+                erase_mode = 'full'
+                break
+            elif choice == '3':
+                print("\nCancelled.")
+                return
+            else:
+                print("Invalid choice. Please enter 1, 2, or 3.")
+        
+        # Perform erase
+        success = self.erase_disc(erase_mode)
+        
+        if success:
+            input("\nPress Enter to continue...")
+    
     def check_disc_status(self) -> Dict:
         """
         Check if a disc is inserted and its current status.
@@ -7330,6 +7523,301 @@ No activation for:
 You don't choose multi-disc splitting - Singe detects it
 automatically and activates it when needed. Seamless UX!
 ═══════════════════════════════════════════════════════════════════════"""
+    
+    @staticmethod
+    def disc_erase_help():
+        return """
+═══════════════════════════════════════════════════════════════════════
+CD-RW DISC ERASE EXPLAINED
+═══════════════════════════════════════════════════════════════════════
+
+Singe can erase (blank) CD-RW discs, allowing you to reuse
+rewritable media. This is essential for managing your CD-RW
+collection and preparing discs for new burns.
+
+WHAT IS CD-RW ERASING?
+
+CD-RW (Compact Disc ReWritable) discs can be erased and reused
+multiple times (typically 1000+ cycles). Erasing removes all
+data from the disc, making it appear blank and ready for a
+new burn.
+
+IMPORTANT:
+• Only CD-RW discs can be erased
+• Regular CD-R discs CANNOT be erased (write-once only)
+• Erasing permanently deletes ALL data on the disc
+• The process is irreversible
+
+ERASE MODES:
+
+Singe offers two erase modes:
+
+1. FAST ERASE (Recommended)
+   - Erases table of contents (TOC) only
+   - Very quick (~1 minute)
+   - Makes disc appear blank
+   - Data technically remains but is inaccessible
+   - Perfect for reusing your own discs
+   - Most common choice
+
+2. FULL ERASE (Thorough)
+   - Erases entire disc surface
+   - Much slower (~60 minutes for 80-min disc)
+   - Completely removes all data
+   - More secure if giving disc away
+   - Use before selling/donating discs
+   - Overwrites all data sectors
+
+WHEN TO USE EACH MODE:
+
+Fast Erase:
+✓ Reusing your own discs
+✓ Quick turnaround needed
+✓ Data not sensitive
+✓ Testing/development
+✓ Regular disc recycling
+
+Full Erase:
+✓ Giving disc to someone else
+✓ Selling or donating disc
+✓ Sensitive data on disc
+✓ Maximum data removal needed
+✓ Disc has errors (full erase may fix)
+
+HOW IT WORKS:
+
+Step 1: Select Option
+- Main menu → Option 12 (Erase CD-RW disc)
+
+Step 2: Choose Erase Mode
+- Fast erase (1 minute)
+- Full erase (60 minutes)
+
+Step 3: Disc Check
+- Singe checks if disc is inserted
+- Verifies disc has data to erase
+- Shows disc information
+
+Step 4: Confirmation
+- Warning about permanent data loss
+- Shows track count if applicable
+- Requires 'yes' to proceed
+
+Step 5: Erase Process
+- Progress indicator shown
+- Can cancel with Ctrl+C
+- DO NOT remove disc during erase
+
+Step 6: Completion
+- Success/failure message
+- Disc now ready for burning
+
+CD-RW vs CD-R:
+
+CD-R (Write-Once):
+✗ Cannot be erased
+✗ Permanent once burned
+✗ One-time use per disc
+✗ Cheaper media
+✓ Better compatibility
+✓ Longer data retention
+
+CD-RW (ReWritable):
+✓ Can be erased
+✓ Reusable 1000+ times
+✓ Cost-effective long-term
+✓ Good for testing
+✗ Slightly less compatible
+✗ More expensive initially
+
+IDENTIFYING CD-RW DISCS:
+
+Look for these markings:
+• "CD-RW" printed on disc
+• "ReWritable" label
+• "RW" designation
+• Usually gray/silver (not green/blue like CD-R)
+• May say "High Speed" or "Ultra Speed"
+
+If unsure:
+- Try to erase it (Singe will tell you if it's not CD-RW)
+- Check disc packaging
+- CD-R discs usually have colored bottom (green, blue)
+- CD-RW discs usually silver/gray
+
+COMMON USE CASES:
+
+Use Case 1: Testing
+Burning test discs for development.
+Action: Use fast erase between tests
+Benefit: Reuse same disc many times
+
+Use Case 2: Temporary Storage
+Burning data for short-term backup.
+Action: Fast erase when no longer needed
+Benefit: Save money on media
+
+Use Case 3: CD Collection
+Want to change music on disc.
+Action: Fast erase, burn new collection
+Benefit: Update playlists easily
+
+Use Case 4: Selling Discs
+Selling used CD-RW discs.
+Action: Full erase before sale
+Benefit: Buyer gets clean disc, your data secure
+
+Use Case 5: Failed Burn
+Burn failed, disc has partial data.
+Action: Fast erase, try again
+Benefit: Don't waste the disc
+
+ERROR TROUBLESHOOTING:
+
+Error: "Disc is not a CD-RW"
+Cause: You inserted a CD-R (write-once)
+Solution: Use a CD-RW disc instead
+
+Error: "Drive does not support erasing"
+Cause: Older drive without erase capability
+Solution: Try different drive or computer
+
+Error: "Disc is write-protected"
+Cause: Some discs have protection
+Solution: Check disc for protection tab/switch
+
+Error: "Disc is already blank"
+Cause: Nothing to erase
+Solution: Just burn to it directly
+
+Error: Erase takes too long
+Cause: Using full erase mode
+Solution: Wait it out, or use fast erase instead
+
+BEST PRACTICES:
+
+1. ALWAYS FAST ERASE FIRST
+   - Only use full erase if needed
+   - Saves time
+   - Adequate for most uses
+
+2. VERIFY DISC AFTERWARDS
+   - Burn something to test
+   - Ensure erase was successful
+   - Check disc still works
+
+3. TRACK DISC USAGE
+   - CD-RW rated for 1000+ cycles
+   - Keep count if heavy use
+   - Replace if errors increase
+
+4. LABEL YOUR DISCS
+   - Mark discs as "RW"
+   - Avoid confusion with CD-R
+   - Track reuse count
+
+5. DON'T INTERRUPT ERASE
+   - Let it complete
+   - Interruption may corrupt disc
+   - Full erase especially sensitive
+
+SAFETY & DATA SECURITY:
+
+Fast Erase Security:
+- TOC removed, data inaccessible
+- Data still technically on disc
+- Recovery possible with special tools
+- Fine for personal use
+- NOT secure for sensitive data
+
+Full Erase Security:
+- All data physically overwritten
+- Data recovery very difficult
+- Suitable for sensitive information
+- Good for disc disposal
+- Takes much longer
+
+For Maximum Security:
+1. Full erase the disc
+2. Physically destroy disc if very sensitive
+3. Or keep disc and never give away
+
+PERFORMANCE:
+
+Fast Erase:
+• Time: ~1 minute
+• Speed: 52x typically
+• Writes: Minimal (TOC only)
+• Wear: Very low
+
+Full Erase:
+• Time: ~60 minutes (80-min disc)
+• Speed: Variable
+• Writes: Entire disc
+• Wear: Moderate (1 rewrite cycle used)
+
+Disc Lifespan:
+• Rated: 1000+ erase cycles
+• Reality: 500-1000 typical
+• Quality: Varies by brand
+• Storage: Affects longevity
+
+COMPARISON: Manual vs Singe
+
+Manual Erasing:
+✗ Remember cdrdao commands
+✗ No progress indicator
+✗ Easy to make mistakes
+✗ No safety checks
+✗ No confirmation prompts
+
+Singe Erasing:
+✓ Simple menu option
+✓ Visual progress bar
+✓ Guided process
+✓ Safety confirmations
+✓ Clear error messages
+✓ Mode explanations
+
+INTEGRATION WITH BURNING:
+
+Typical Workflow:
+1. Have CD-RW with old data
+2. Erase disc (Option 12)
+3. Wait for erase to complete
+4. Burn new content (Option 1-3)
+5. Enjoy!
+
+Singe makes this easy:
+• All in one application
+• No need to switch tools
+• Disc detection works
+• History tracks erases
+• Configuration remembered
+
+RECOMMENDATIONS:
+
+For Beginners:
+• Always use fast erase
+• Don't overthink it
+• Read confirmation prompts
+• Let process complete
+
+For Advanced Users:
+• Use full erase for security
+• Script multiple erases if needed
+• Track disc reuse count
+• Test disc after many cycles
+
+For Security-Conscious:
+• Always full erase before disposal
+• Consider physical destruction
+• Use CD-R for permanent data
+• Keep sensitive discs
+
+With disc erasing, your CD-RW discs become truly
+reusable media - burn, erase, repeat!
+═══════════════════════════════════════════════════════════════════════"""
 
 def main():
     """Enhanced main program with audio CD support, CD-TEXT, track gaps, fades, verification, help system, and folder scanning."""
@@ -7373,12 +7861,13 @@ def main():
         print("9. Export to multiple formats")
         print("10. Album art manager")
         print("11. Batch burn queue")
-        print("12. Configuration settings")
-        print("13. Burn history")
-        print("14. Help topics")
-        print("15. Exit")
+        print("12. Erase CD-RW disc")
+        print("13. Configuration settings")
+        print("14. Burn history")
+        print("15. Help topics")
+        print("16. Exit")
 
-        choice = input("\nSelect option (1-15): ").strip()
+        choice = input("\nSelect option (1-16): ").strip()
         
         if choice == '12':
             # Configuration settings
@@ -8246,7 +8735,7 @@ def main():
                 else:
                     print("Invalid option")
         
-        elif choice == '13':
+        elif choice == '14':
             # Burn history
             while True:
                 print("\n" + "="*70)
@@ -8305,7 +8794,7 @@ def main():
                 else:
                     print("Invalid option")
         
-        elif choice == '14':
+        elif choice == '15':
             print("\n=== HELP TOPICS ===")
             print("1. Multi-Session Support")
             print("2. CD Verification")
@@ -8325,10 +8814,11 @@ def main():
             print("16. Configuration Settings")
             print("17. Disc Detection")
             print("18. Burn History")
-            print("19. Multi-Disc Splitting (NEW!)")
-            print("20. Back to main menu")
+            print("19. Multi-Disc Splitting")
+            print("20. CD-RW Disc Erase (NEW!)")
+            print("21. Back to main menu")
 
-            help_choice = input("\nSelect help topic (1-20): ").strip()
+            help_choice = input("\nSelect help topic (1-21): ").strip()
             
             if help_choice == '1':
                 print(help_sys.multi_session_help())
@@ -8369,9 +8859,11 @@ def main():
             if help_choice == '19':
                 print(help_sys.multi_disc_splitting_help())
             if help_choice == '20':
+                print(help_sys.disc_erase_help())
+            if help_choice == '21':
                 continue
         
-        elif choice == '15':
+        elif choice == '16':
             print("\n" + "="*70)
             print("Thank you for using Singe.")
             print("Goodbye!")
